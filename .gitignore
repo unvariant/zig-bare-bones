@@ -13,6 +13,8 @@ bin/
 **/*.objdump
 **/*.bin
 **/*.log
+**/*.o
+**/*.elf
 
 # disk image files
 **/*.dmg

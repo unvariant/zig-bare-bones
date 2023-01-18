@@ -92,7 +92,7 @@ _boot_start:
     int   0x13
     jnc   int_13h_extensions_supported
 
-    mov   al,    0x33
+    mov   al,    0x39
     jmp   abort
 
 int_13h_extensions_supported:
@@ -150,21 +150,21 @@ search_directory:
     mov   cx,    word [bytes_per_sector]
     xor   edx,   edx
     div   ecx
-    mov   cx,     word [reserved_sectors]
-    add   eax,    ecx
+    mov   cx,    word [reserved_sectors]
+    add   eax,   ecx
 
-    mov   ebx,    edx
-    xor   edx,    edx
-    mov   di,     0x1000
+    mov   ebx,   edx
+    xor   edx,   edx
+    mov   di,    0x1000
     call  read_sector
 
-    mov   ebx,    dword [0x1000 + bx]
-    and   ebx,    0x0FFFFFFF
-    cmp   ebx,    0x0FFFFFF8
+    mov   ebx,   dword [0x1000 + bx]
+    and   ebx,   0x0FFFFFFF
+    cmp   ebx,   0x0FFFFFF8
     jl    .cluster_loop
 
 .not_found:
-    mov   al,    0x35
+    mov   al,    0x38
     jmp   abort
 
 .found:
@@ -218,14 +218,12 @@ iterate_entries:
 
 
 cluster_to_sector:
-    push  ecx
     mov   eax,   ebx
     sub   eax,   2
-    movzx ecx,   byte [sectors_per_cluster]
-    mul   ecx
+    movzx edx,   byte [sectors_per_cluster]
+    mul   edx
     add   eax,   dword [scratch + _first_data_sector]
     adc   edx,   0
-    pop   ecx
     ret
 
 
@@ -256,7 +254,7 @@ read_sector:
     ret
 
 .error:
-    mov   al,    0x30
+    mov   al,    0x37
     jmp   abort
 
 
@@ -267,61 +265,8 @@ abort:
     mov   bx,    0x000F
     mov   ah,    0x0E
     int   0x10
-hang:
-    jmp   hang
-
-
-; ; # print_nhex: displays hex number on screen
-; ; - si: pointer to number
-; ; - cx: length of number in bytes
-; ;     - assumes that cx is not zero
-; ; - clobber: none
-; ; - return: none
-; print_hex:
-;     pushad
-;     mov    bp,    sp
-
-;     mov    ax,    0
-;     push   0
-;     push   `\r\n`
-
-; .loop:
-;     lodsb
-;     mov    ah,    al
-;     shr    ah,    4
-;     and    al,    0x0F
-;     call   hex
-;     xchg   al,    ah
-;     call   hex
-;     push   ax
-;     loop   .loop
-
-;     mov    si,    sp
-;     mov    ah,    0x0E
-;     mov    bx,    0x0F
-; .print:
-;     lodsb
-;     test   al,    al
-;     jz     .done
-;     int    0x10
-;     jmp    .print
-
-; .done:
-;     mov    sp,    bp
-;     popad
-;     ret
-
-
-; ; # hex: converts zero extended 4 bit number in al into hex character
-; ; - clobber: al
-; ; - return: al
-; hex:
-;     add    al,    0x30
-;     cmp    al,    0x39
-;     jle    .done
-;     add    al,    `A` - 0x30 - 0x0A
-; .done:
-;     ret
+.hang:
+    jmp   .hang
 
 
 boot_media: db 0

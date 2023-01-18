@@ -1,7 +1,7 @@
 run:
-	nasm -f bin boot/bootsector.asm -o boot/bootsector.bin
+	@set -e
+	make -C boot --file=boot.makefile build
 	python3 create_bootable_partition.py
-	nasm -f bin boot/mbrsector.asm -o boot/mbrsector.bin
 	dd if=boot/mbrsector.bin of=boot.dmg conv=notrunc bs=446 count=1
 	dd if=boot/mbrsector.bin of=boot.dmg conv=notrunc bs=1 count=2 skip=510 seek=510
 	qemu-system-x86_64 -no-reboot -no-shutdown -vga virtio -D qemu.log -d trace:ide_sector_read,trace:pic_interrupt,int,in_asm -drive file=boot.dmg,format=raw
