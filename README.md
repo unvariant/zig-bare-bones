@@ -42,6 +42,7 @@
 ## Project Structure
 The project structure is all over the place right now, I am in the process of documenting my code and cleaning up the structure.
 - `disk/`
+    - contains files that will be placed into the root of the filesystem
 	- `boot/`
 		- `loader.bin`
 			- loads and executes main bootloader
