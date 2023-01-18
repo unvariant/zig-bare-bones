@@ -1,6 +1,7 @@
 run:
 	@set -e
 	make -C boot --file=boot.makefile build
+	cp boot/loader.bin disk/boot/loader.bin
 	python3 create_bootable_partition.py
 	dd if=boot/mbrsector.bin of=boot.dmg conv=notrunc bs=446 count=1
 	dd if=boot/mbrsector.bin of=boot.dmg conv=notrunc bs=1 count=2 skip=510 seek=510
