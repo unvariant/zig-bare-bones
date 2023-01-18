@@ -20,3 +20,6 @@ bin/
 
 # intellij zig support is terrible
 .idea/
+
+# macos
+**/*.DS_Store
