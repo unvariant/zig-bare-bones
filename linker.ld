@@ -1,22 +1,17 @@
 ENTRY(_boot_start)
 
 SECTIONS
-{
-    . = 0x500;
-    .mbrsect : {
-        KEEP(*(.mbrsect))
-    }
-    
+{    
     font_map = 0x1000;
     e820_memory_map = 0x7000;
 
-    . = 0x7C00;
+    . = 0x8000;
 
     .bootsect : {
         KEEP(*(.bootsect))
     }
 
-    . = 0x7E00;
+    . = 0x8200;
     __boot_start = .;
 
     .boot : {

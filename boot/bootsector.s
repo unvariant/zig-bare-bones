@@ -1,10 +1,18 @@
     .intel_syntax noprefix
-
     .section .boot, "awx"
     .code16
 
 
     .global  _boot_start
+    .global  map_directory
+    .global  read_sector
+    .global  root_cluster_number
+    .global  file_closure_offset
+    .global  file_closure_segment
+    .global  compare_file
+    .global  file_attribute
+    .global  file_name
+    .global  bytes_per_sector
 
 
 bios_parameter_block:
@@ -66,17 +74,18 @@ system_id:
     .space  8,   0x20
 
 
-    .equ scratch, 0x500
-        .equ packet, 0x00
-            .equ _size,         0x00
-            .equ _sector_count, 0x02
-            .equ _offset,       0x04
-            .equ _segment,      0x06
-            .equ _block_lo,     0x08
-            .equ _block_hi,     0x0C
+    .equ SCRATCH, 0x1000
+        .equ PACKET, 0x00
+            .equ SIZE,         0x00
+            .equ SECTOR_COUNT, 0x02
+            .equ DST_OFFSET,   0x04
+            .equ DST_SEGMENT,  0x06
+            .equ BLOCK_LO,     0x08
+            .equ BLOCK_HI,     0x0C
 
-        .equ _first_data_sector, 0x10
-        .equ _partition_start_lba, 0x14
+        .equ FIRST_DATA_SECTOR, 0x10
+        .equ PARTITION_START_LBA, 0x14
+    .equ TMP, 0x2000
 
 
 _boot_start:
@@ -89,80 +98,111 @@ _boot_start:
     mov   byte ptr [boot_media], dl
 
     mov   eax,   dword ptr ds:[si + 0x08]
-    mov   dword ptr [scratch + _partition_start_lba], eax
+    mov   dword ptr [SCRATCH + PARTITION_START_LBA], eax
 
-    mov   word ptr [scratch + packet + _size], 0x10
+    mov   word ptr [SCRATCH + PACKET + SIZE], 0x10
 
     mov   ah,    0x41
     mov   bx,    0x55AA
     int   0x13
     jnc   int_13h_extensions_supported
 
-    mov   al,    0x39
-    jmp   abort
+    mov   al,    0x37
+    jmp   debug
 
 int_13h_extensions_supported:
     # calculate first data sector
-    xor   eax,   eax
-    mov   al,    byte ptr [number_of_FATs]
+    movzx eax,   byte ptr [number_of_FATs]
     mul   dword ptr [sectors_per_FAT32]
     movzx edx,   word ptr [reserved_sectors]
     add   eax,   edx
 
-    mov   dword ptr [scratch + _first_data_sector], eax
+    mov   dword ptr [SCRATCH + FIRST_DATA_SECTOR], eax
 
     mov   ebx,   dword ptr [root_cluster_number]
-    call  search_directory_abort
+    call  map_directory_abort
 
     mov   byte ptr [file_attribute], 0x20
     mov   word ptr [file_name], offset loader_file
-    call  search_directory_abort
+    call  map_directory_abort
 
     call  cluster_to_sector
-    mov   di,    0x7E00
+    mov   edi,   0x7E00
     call  read_sector
+    jnc   switch_to_loader
 
+    mov   al,    0x39
+    jmp   debug
+
+switch_to_loader:
     jmp   0x7E00
 
 
-search_directory_abort:
-    call  search_directory
-    jnc   1f
-    ret
-1:
+map_directory_abort:
     mov   al,    0x38
-    jmp   abort
+    call  map_directory
+    jc    debug
+bpoint:
+    push  word ptr [edi + 20]
+    push  word ptr [edi + 26]
+    pop   ebx
+    ret
 
 
-# # search_directory:
-# - dl: file attribute
-# - si: file name
+# # map_directory:
 # - ebx: cluster number
-search_directory:
+map_directory:
     pushad
-    mov   bp,    sp
 
 cluster_loop:
     movzx cx,    byte ptr [sectors_per_cluster]
     call  cluster_to_sector
-    mov   di,    0x1000
+    mov   edi,   TMP
 
 sector_loop:
-    call  read_sector_abort
+    call  read_sector
+    jc    directory_done
 
-entry_loop:
-    call  iterate_entries
+    # .inline_start
+    /*pushad
+    mov   ebx,   edi
+    mov   fs,    word ptr [file_closure_segment]
+    call  fs:word ptr [file_closure_offset]
+    jnc   directory_found
+    popad
+    jmp   directory_not_found
+    //jnz   directory_not_found*/
+    iterate_entries:
+        pushad
 
-    jc    directory_found
+        mov   dx,    word ptr [bytes_per_sector]
+        shr   dx,    5
+        mov   ebx,   edi
+
+    iterate_entries_loop:
+        cmp   byte ptr [bx], 0
+        jz    iterate_entries_not_found
+
+        mov   fs,    word ptr [file_closure_segment]
+        call  fs:dword ptr [file_closure_offset]
+        jnc   directory_found
+
+    next_entry:
+        add   bx,    32
+        dec   dx
+        jnz   iterate_entries_loop
+
+    iterate_entries_not_found:
+        popad
+    # .inline_end
+
     add   eax,   1
     adc   edx,   0
     loop  sector_loop
 
-next_cluster:
-    xor   ecx,   ecx
     mov   eax,   ebx
     shl   eax,   2
-    mov   cx,    word ptr [bytes_per_sector]
+    movzx ecx,   word ptr [bytes_per_sector]
     xor   edx,   edx
     div   ecx
     mov   cx,    word ptr [reserved_sectors]
@@ -170,87 +210,92 @@ next_cluster:
 
     mov   ebx,   edx
     xor   edx,   edx
-    mov   di,    0x1000
-    call  read_sector_abort
+    mov   edi,   TMP
+    call  read_sector
+    jc    directory_done
 
-    mov   ebx,   dword ptr [0x1000 + bx]
+    mov   ebx,   dword ptr [TMP + bx]
+
     and   ebx,   0x0FFFFFFF
     cmp   ebx,   0x0FFFFFF8
     jl    cluster_loop
 
 directory_not_found:
-    clc
-    jmp   0f
+    stc
+    jmp   directory_done
 
 directory_found:
-    mov   dx,    word ptr [di + 20]
-    mov   ax,    word ptr [di + 26]
-    mov   word ptr [bp + 16], ax
-    mov   word ptr [bp + 18], dx
-    stc
-0:
+    # clean up stack from inlined function
+    add   sp,    32
+    mov   bp,    sp
+    mov   dword ptr [bp], ebx
+    // not required b/c `add sp, 32` should not overflow, and clears the carry flag
+    clc
+directory_done:
     popad
     ret
 
 
-# # iterate_entries
-# - return:
-#     - carry flag set if found
-#     - di: pointer to entry
-iterate_entries:
-    pushad
-    mov   bp,    sp
-
+/*compare_file:
     mov   dx,    word ptr [bytes_per_sector]
     shr   dx,    5
-    mov   bx,    0x1000
-    movzx ax,    byte ptr [file_attribute]
 
-iterate_entries_loop:
+1:
     cmp   byte ptr [bx], 0
-    jz    iterate_entries_done
+    jz    compare_file$not_found
 
-    test  byte ptr [bx + 11], al
-    jz    next_entry
+    mov   al,    byte ptr [file_attribute]
+    test  al,    byte ptr [bx + 11]
+    jz    compare_file$continue
 
     mov   si,    word ptr [file_name]
     mov   di,    bx
     mov   cx,    11
     repz  cmpsb
 
+    # `test cl, cl` clears carry flag
     test  cl,    cl
-    setz  ah
-    jz    iterate_entries_done
+    jz    compare_file$done
 
-next_entry:
+compare_file$continue:
     add   bx,    32
     dec   dx
-    jnz   iterate_entries_loop
+    jnz   1b
 
-iterate_entries_done:
-    sahf
-    mov   word ptr [bp], bx
-    popad
-    ret
+compare_file$not_found:
+    test  dx,    dx
+    stc
+compare_file$done:
+    ret*/
+
+
+compare_file:
+    mov   al,    byte ptr [file_attribute]
+    test  al,    byte ptr [bx + 11]
+    jz    compare_file$not_equal
+
+    mov   si,    word ptr [file_name]
+    mov   di,    bx
+    mov   cx,    11
+    repz  cmpsb
+
+    # `test cl, cl` clears carry flag
+    test  cl,    cl
+    jz    compare_file$equal
+
+compare_file$not_equal:
+    stc
+compare_file$equal:
+    retf
 
 
 cluster_to_sector:
-    mov   eax,   ebx
-    sub   eax,   2
+    lea   eax,   [ebx - 2]
     movzx edx,   byte ptr [sectors_per_cluster]
     mul   edx
-    add   eax,   dword ptr [scratch + _first_data_sector]
+    add   eax,   dword ptr [SCRATCH + FIRST_DATA_SECTOR]
     adc   edx,   0
     ret
-
-
-read_sector_abort:
-    call  read_sector
-    jnc   1f
-    ret
-1:
-    mov   al,    0x37
-    jmp   abort
 
 
 # # read sectors: load sectors from the disk into memory
@@ -259,48 +304,40 @@ read_sector_abort:
 read_sector:
     pushad
 
-    add   eax,   dword ptr [scratch + _partition_start_lba]
-    mov   dword ptr [scratch + packet + _block_lo], eax
-    mov   dword ptr [scratch + packet + _block_hi], edx
-    mov   dword ptr[scratch + packet + _offset], edi
-    shl   word ptr [scratch + packet + _segment], 12
+    add   eax,   dword ptr [SCRATCH + PARTITION_START_LBA]
+    mov   dword ptr [SCRATCH + PACKET + BLOCK_LO], eax
+    mov   dword ptr [SCRATCH + PACKET + BLOCK_HI], edx
+    mov   dword ptr [SCRATCH + PACKET + DST_OFFSET], edi
+    shl   word ptr [SCRATCH + PACKET + DST_SEGMENT], 12
+    mov   word ptr [SCRATCH + PACKET + SECTOR_COUNT], 1
 
-    mov   word ptr [scratch + packet + _sector_count], 1
     mov   ah,    0x42
-    mov   si,    scratch + packet
+    xor   si,    si
+    mov   ds,    si
+    mov   si,    SCRATCH + PACKET
     mov   dl,    byte ptr [boot_media]
     int   0x13
-    jc    read_sector_error
-    test  ah,    ah
-    jnz   read_sector_error
-    cmp   word ptr [scratch + packet + _sector_count], 1
-    jnz   read_sector_error
 
-    stc
-
-0:
     popad
     ret
 
-read_sector_error:
-    clc
-    jmp   0b
 
-
-# # abort: displays null terminated string in si, then hangs
+# # deubg
 # - clobber: none
 # - return: does not return
-abort:
+debug:
     mov   bx,    0x000F
     mov   ah,    0x0E
     int   0x10
-1:
-    jmp   1b
+hang:
+    jmp   hang
 
 
 boot_media: .byte 0
 file_attribute: .byte 0x10
 file_name: .2byte offset boot_directory
+file_closure_offset: .2byte offset compare_file
+file_closure_segment: .2byte 0
 
 boot_directory: .ascii "BOOT       "
 loader_file:    .ascii "LOADER  BIN"
@@ -308,5 +345,3 @@ loader_file:    .ascii "LOADER  BIN"
 
     .org    510
     .2byte  0xAA55
-
-    .att_syntax prefix

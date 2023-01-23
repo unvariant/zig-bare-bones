@@ -15,10 +15,12 @@ bin/
 **/*.log
 **/*.o
 **/*.elf
+**/*.a
 
 # disk image files
 **/*.dmg
 **/*.img
+disk/
 
 # intellij zig support is terrible
 .idea/

@@ -3,7 +3,7 @@
     .code16
 
     .global  _mbr_relocate
-    .equ     BASE, 0x500
+    .equ     BASE, 0x600
 
 _mbr_relocate:
     cli
@@ -41,12 +41,12 @@ check_for_int_13h_extensions:
 	jc    int_13h_handler
 
     mov   si,    offset int_13h_extensions_supported
-    call  print_string
+    call  print_str
 
     call  load_active_partition
 
     mov   si,    offset no_active_partitions
-    call  print_string
+    call  print_str
     jmp   hang
 
 
@@ -55,7 +55,7 @@ load_active_partition:
     mov   cx,    4
 
 search_partitions:
-    test  byte ptr ds:[bx], 0x80
+    test  byte ptr [bx], 0x80
     jz    continue_search
 
     mov   eax,   dword ptr [bx + 0x0C]
@@ -87,7 +87,7 @@ continue_search:
 
 int_13h_handler:
     mov   si,    offset int_13h_error
-    call  print_string
+    call  print_str
     movzx ax,    ah
     push  ax
     mov   cx,    1
@@ -96,7 +96,7 @@ int_13h_handler:
     jmp   hang
 
 
-print_string:
+print_str:
     pusha
     mov    ah,    0x0e                        # ah=0x0E, int 0x10, print character and move cursor
     mov    bx,    0 << 8 | 0x0F
@@ -136,7 +136,7 @@ print_hex:
     loop   1b
 
     mov    si,    sp
-    call   print_string
+    call   print_str
 
     mov    sp,    bp
     pop    bp
@@ -179,5 +179,3 @@ int_13h_extensions_supported: .asciz "int 13h extensions found\r\n"
 
     .org   510
     .2byte 0xAA55
-
-    .att_syntax prefix

@@ -1,5 +1,4 @@
     .intel_syntax noprefix
-
     .section .bootsect, "awx"
 	.code16
 

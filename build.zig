@@ -132,28 +132,24 @@ fn bootloader_setup(b: *Builder) *Build.LibExeObjStep {
         .path = "linker.ld"
     });
 
-    loader.addAssemblyFileSource(.{
-        .path = "arch/x86_64/fat32/bootsector.s",
+    loader.addAssemblyFileSource(FileSource {
+        .path = "arch/x86_64/asm/stage_1.s"
     });
-
-    // loader.addAssemblyFileSource(FileSource {
-    //     .path = "arch/x86_64/asm/stage_1.s"
-    // });
-    // loader.addAssemblyFileSource(FileSource {
-    //     .path = "arch/x86_64/asm/stage_2.s"
-    // });
-    // loader.addAssemblyFileSource(FileSource {
-    //     .path = "arch/x86_64/asm/stage_3.s"
-    // });
-    // loader.addAssemblyFileSource(FileSource {
-    //     .path = "arch/x86_64/asm/stage_4.s"
-    // });
-    // loader.addAssemblyFileSource(FileSource {
-    //     .path = "arch/x86_64/asm/vesa.s"
-    // });
-    // loader.addAssemblyFileSource(FileSource {
-    //     .path = "arch/x86_64/asm/interrupt.s"
-    // });
+    loader.addAssemblyFileSource(FileSource {
+        .path = "arch/x86_64/asm/stage_2.s"
+    });
+    loader.addAssemblyFileSource(FileSource {
+        .path = "arch/x86_64/asm/stage_3.s"
+    });
+    loader.addAssemblyFileSource(FileSource {
+        .path = "arch/x86_64/asm/stage_4.s"
+    });
+    loader.addAssemblyFileSource(FileSource {
+        .path = "arch/x86_64/asm/vesa.s"
+    });
+    loader.addAssemblyFileSource(FileSource {
+        .path = "arch/x86_64/asm/interrupt.s"
+    });
 
     return loader;
 }
