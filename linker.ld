@@ -5,17 +5,18 @@ SECTIONS
     font_map = 0x1000;
     e820_memory_map = 0x7000;
 
-    . = 0x8000;
-
-    .bootsect : {
-        KEEP(*(.bootsect))
+    .boot (0x7C00) (NOLOAD) : {
+        *(.boot)
     }
 
-    . = 0x8200;
-    __boot_start = .;
+    .loader (0x7E00) (NOLOAD) : {
+        *(.loader)
+    }
 
-    .boot : {
-        KEEP(*(.boot))
+    . = 0x8000;
+    __boot_start = .;
+    .bootsect : {
+        KEEP(*(.bootsect))
     }
 
     . = ALIGN(4K);
@@ -53,13 +54,6 @@ SECTIONS
     .bss : ALIGN(4K) {
         *(COMMON)
         *(.bss)
-    }
-
-    . = ALIGN(4K);
-    __kernel_image = .;
-
-    .kernel : ALIGN(4K) {
-        KEEP(*(.kernel))
     }
 
     __boot_end = .;

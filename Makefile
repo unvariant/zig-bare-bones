@@ -9,7 +9,7 @@ DEBUGGER_FLAGS = -s -S
 build:
 	@set -e
 	make -C boot --file=boot.makefile build
-	zig build
+	# zig build
 	cp boot/loader.bin disk/boot/loader.bin
 	cp zig-out/bin/bootloader.bin disk/boot/switch.bin
 	

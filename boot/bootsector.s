@@ -7,8 +7,7 @@
     .global  map_directory
     .global  read_sector
     .global  root_cluster_number
-    .global  file_closure_offset
-    .global  file_closure_segment
+    .global  file_closure_pointer
     .global  compare_file
     .global  file_attribute
     .global  file_name
@@ -143,8 +142,8 @@ map_directory_abort:
     call  map_directory
     jc    debug
 bpoint:
-    push  word ptr [edi + 20]
-    push  word ptr [edi + 26]
+    push  word ptr [esi + 20]
+    push  word ptr [esi + 26]
     pop   ebx
     ret
 
@@ -164,36 +163,14 @@ sector_loop:
     jc    directory_done
 
     # .inline_start
-    /*pushad
+    pushad
     mov   ebx,   edi
     mov   fs,    word ptr [file_closure_segment]
     call  fs:word ptr [file_closure_offset]
     jnc   directory_found
     popad
     jmp   directory_not_found
-    //jnz   directory_not_found*/
-    iterate_entries:
-        pushad
-
-        mov   dx,    word ptr [bytes_per_sector]
-        shr   dx,    5
-        mov   ebx,   edi
-
-    iterate_entries_loop:
-        cmp   byte ptr [bx], 0
-        jz    iterate_entries_not_found
-
-        mov   fs,    word ptr [file_closure_segment]
-        call  fs:dword ptr [file_closure_offset]
-        jnc   directory_found
-
-    next_entry:
-        add   bx,    32
-        dec   dx
-        jnz   iterate_entries_loop
-
-    iterate_entries_not_found:
-        popad
+    //jnz   directory_not_found
     # .inline_end
 
     add   eax,   1
@@ -228,7 +205,7 @@ directory_found:
     # clean up stack from inlined function
     add   sp,    32
     mov   bp,    sp
-    mov   dword ptr [bp], ebx
+    mov   dword ptr [bp + 4], ebx
     // not required b/c `add sp, 32` should not overflow, and clears the carry flag
     clc
 directory_done:
@@ -236,7 +213,7 @@ directory_done:
     ret
 
 
-/*compare_file:
+compare_file:
     mov   dx,    word ptr [bytes_per_sector]
     shr   dx,    5
 
@@ -266,27 +243,7 @@ compare_file$not_found:
     test  dx,    dx
     stc
 compare_file$done:
-    ret*/
-
-
-compare_file:
-    mov   al,    byte ptr [file_attribute]
-    test  al,    byte ptr [bx + 11]
-    jz    compare_file$not_equal
-
-    mov   si,    word ptr [file_name]
-    mov   di,    bx
-    mov   cx,    11
-    repz  cmpsb
-
-    # `test cl, cl` clears carry flag
-    test  cl,    cl
-    jz    compare_file$equal
-
-compare_file$not_equal:
-    stc
-compare_file$equal:
-    retf
+    ret
 
 
 cluster_to_sector:
@@ -336,6 +293,8 @@ hang:
 boot_media: .byte 0
 file_attribute: .byte 0x10
 file_name: .2byte offset boot_directory
+
+file_closure_pointer:
 file_closure_offset: .2byte offset compare_file
 file_closure_segment: .2byte 0
 

@@ -9,32 +9,33 @@
     .extern  map_directory
     .extern  read_sector
     .extern  root_cluster_number
-    .extern  file_closure_offset
-    .extern  file_closure_segment
+    .extern  file_closure_pointer
     .extern  compare_file
     .extern  file_attribute
     .extern  file_name
     .extern  bytes_per_sector
 
 
-_loader_start:/*
+_loader_start:
     mov   sp,    0x7C00
-    mov   byte ptr [file_attribute], 0x20
-    mov   word ptr [file_name], offset target
+    call  root_file
 
-    mov   ebx,   dword ptr [root_cluster_number]
-    call  map_directory
+    mov   bx,    offset target
+    mov   dl,    0x20
+    call  find_file
     jc    fserror
-    
-    mov   esi,   edi
+
+    mov   cx,    32
+    call  print_hex
+
     mov   edi,   0xA000
     call  read_file
     jc    rferror
 
-    mov   si,    0xA000
+    mov   esi,   offset target
     call  print_str
 
-    jmp   hang*/
+    jmp   hang
 
 fserror:
     mov   si,    offset fserror_str
@@ -50,21 +51,45 @@ hang:
     jmp   hang
 
 
-test_closure:
-    pushad
-    mov   si,    bx
-    call  print_str
-    popad
+root_file:
+    push ax
+    mov   esi,   offset root_entry
+    mov   ax,    word ptr [root_cluster_number]
+    mov   word ptr [esi + 26], ax
+    mov   ax,    word ptr [root_cluster_number + 2]
+    mov   word ptr [esi + 20], ax
+    pop ax
     ret
 
 
 /*
  * find_file
- *     - ebx: parent directory cluster
- *     - si: 
+ *     - esi: directory entry to search
+ *     - bx: filename
+ *     - dl: file attribute
+ * return:
+ *     - carry flag set on error
+ *     - otherwise esi holds file entry
  */
 find_file:
+    push  edx
+    push  ebx
 
+    mov   byte ptr [file_attribute], dl
+    mov   word ptr [file_name], bx
+
+    mov   dword ptr [file_closure_pointer], offset compare_file
+    shl   word ptr [file_closure_pointer + 2], 12
+
+    mov   bx,    word ptr [esi + 20]
+    shl   ebx,   16
+    mov   bx,    word ptr [esi + 26]
+
+    call  map_directory
+
+    pop   ebx
+    pop   edx
+    ret
 
 /*
  * read_file
@@ -80,19 +105,12 @@ read_file:
     mov   dword ptr [read_file_closure$size], eax
     mov   dword ptr [read_file_closure$destination], edi
 
-    mov   dword ptr [file_closure_offset], offset read_file_closure
-    shl   word ptr [file_closure_segment], 12
+    mov   dword ptr [file_closure_pointer], offset read_file_closure
+    shl   word ptr [file_closure_pointer + 2], 12
 
-    movzx ebx,   word ptr [esi + 20]
+    mov   bx,    word ptr [esi + 20]
     shl   ebx,   16
     mov   bx,    word ptr [esi + 26]
-
-    mov   si,    offset read_file_closure$size
-    mov   cx,    4
-    call  print_hex
-    mov   si,    offset read_file_closure$destination
-    mov   cx,    4
-    call  print_hex
 
     call  map_directory
 
@@ -182,6 +200,7 @@ hex:
     ret
 
 
+root_entry: .space 32
 fserror_str: .asciz "fs error"
 rferror_str: .asciz "rf error"
 target: .ascii "CONFIG     "
