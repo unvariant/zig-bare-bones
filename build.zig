@@ -1,15 +1,18 @@
-const builtin = std.builtin;
 const std = @import("std");
+const builtin = std.builtin;
 const Build = std.build;
 const Builder = Build.Builder;
 const FileSource = std.build.FileSource;
 const Target = std.Target;
 const Feature = Target.Cpu.Feature;
 const CrossTarget = std.zig.CrossTarget;
+const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator(.{});
+const ArrayList = std.ArrayList;
+
 const features = Target.x86.Feature;
 const fs = std.fs;
-const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator(.{});
-const System = @import("system.zig");
+const debug = std.debug;
+const mem = std.mem;
 
 const build_dir_str = [_][]const u8{ "mkdir", "-p", "zig-out/bin" };
 const strip_cmd_str = [_][]const u8{ "llvm-objcopy", "--strip-debug", "-I", "elf64-x86-64", "-O", "binary", "--binary-architecture=i386:x86-64", "kernel.elf", "zig-out/bin/kernel.bin" };
@@ -22,99 +25,139 @@ const copy_bootsector_str = [_][]const u8{ "dd", "if=zig-out/bin/bootloader.bin"
 const copy_boot_signature_str = [_][]const u8{ "dd", "if=zig-out/bin/bootloader.bin", "of=boot.dmg", "conv=notrunc", "bs=1", "count=2", "skip=510", "seek=510" };
 const create_bootable_partition_str = [_][]const u8{ "python3", "create_bootable_partition.py" };
 
-pub fn build(b: *Builder) void {
-    const kernel_step = b.step("kernel", "prepare the kernel");
+var b: *Builder = undefined;
+var src: fs.Dir = undefined;
 
-    //const kernel = b.addStaticLibrary("kernel", "zig-out/bin/kernel.o");
+pub fn build(builder: *Builder) void {
+    b = builder;
+    src = fs.cwd().openDir("src", .{
+        .access_sub_paths = true,
+    }) catch |e| @panic(@errorName(e));
 
-    const loader_step = b.step("bootloader", "build the bootloader");
+    const run = b.step("run", "meh");
+    const boot = bootloader() catch |e| @panic(@errorName(e));
 
-    const run_step = b.step("run", "run the bootloader");
-
-    const fat32_disk_step = b.step("fat32", "create a bootable fat32 disk");
-
-    kernel_setup(b, kernel_step);
-
-    const strip_bootloader_cmd = b.addSystemCommand(&strip_bootloader_cmd_str);
-
-    const loader = bootloader_setup(b);
-    //loader.step.dependOn(kernel_step);
-    loader.target = bootloader_target();
-    //loader.linkLibrary(kernel);
-    loader.install();
-    loader_step.dependOn(&loader.step);
-    loader_step.dependOn(b.getInstallStep());
-    loader_step.dependOn(&strip_bootloader_cmd.step);
-
-    const create_fat32_disk = b.addSystemCommand(&create_fat32_disk_str);
-    const copy_bootsector = b.addSystemCommand(&copy_bootsector_str);
-    const copy_boot_signature = b.addSystemCommand(&copy_boot_signature_str);
-    const create_bootable_partition = b.addSystemCommand(&create_bootable_partition_str);
-
-    fat32_disk_step.dependOn(&strip_bootloader_cmd.step);
-    fat32_disk_step.dependOn(&create_fat32_disk.step);
-    fat32_disk_step.dependOn(&copy_bootsector.step);
-    fat32_disk_step.dependOn(&copy_boot_signature.step);
-    fat32_disk_step.dependOn(&create_bootable_partition.step);
-
-    const run_cmd = b.addSystemCommand(&run_cmd_str);
-    run_step.dependOn(kernel_step);
-    run_step.dependOn(fat32_disk_step);
-    run_step.dependOn(&run_cmd.step);
+    run.dependOn(&boot.step);
+    run.dependOn(b.getInstallStep());
 }
 
-fn kernel_setup(b: *Builder, kernel_step: *Build.Step) void {
-    const build_dir = b.addSystemCommand(&build_dir_str);
-    const strip_cmd = b.addSystemCommand(&strip_cmd_str);
-    const wrap_once = b.addSystemCommand(&wrap_cmd_str);
-    const wrap_twice = b.addSystemCommand(&wrap_cmd_str);
-    const rename_cmd = b.addSystemCommand(&rename_cmd_str);
+const BuildError = error{
+    FileNotFound,
+};
 
-    kernel_step.dependOn(&build_dir.step);
-    kernel_step.dependOn(&strip_cmd.step);
-    kernel_step.dependOn(&wrap_once.step);
-    kernel_step.dependOn(&wrap_twice.step);
-    kernel_step.dependOn(&rename_cmd.step);
+fn bootloader() !*Build.LibExeObjStep {
+    const arena = b.allocator;
+    _ = arena;
+
+    const boot = b.addExecutable(.{
+        .name = "boot",
+        .root_source_file = .{
+            .path = "src/main.zig",
+        },
+        .target = bootloader_target(),
+    });
+
+    const loader_files = try files("boot");
+    for (loader_files.items) |path| {
+        if (mem.eql(u8, fs.path.extension(path), ".s")) {
+            const loader_file = try assemble(path);
+            boot.step.dependOn(&loader_file.step);
+        }
+    }
+
+    return boot;
 }
 
-fn load_assembly(loader: *Build.LibExeObjStep, directory: *fs.IterableDir) void {
-    _ = loader;
-    _ = directory;
+fn assemble(path: []const u8) !*Build.LibExeObjStep {
+    const arena = b.allocator;
+    const dirname = fs.path.dirname(path).?;
+    const stem = fs.path.stem(path);
+    const linker_script = try fs.path.join(arena, &[_][]const u8{ dirname, stem, ".ld" });
+
+    const step = b.addAssembly(.{
+        .name = stem,
+        .source_file = .{
+            .path = path,
+        },
+        .target = bootloader_target(),
+        .optimize = .ReleaseSmall,
+    });
+
+    if (exists(linker_script)) {
+        step.linker_script = .{
+            .path = linker_script,
+        };
+    }
+
+    return step;
 }
 
-fn bootloader_setup(b: *Builder) *Build.LibExeObjStep {
-    const loader = b.addExecutable(.{ .name = "zig-bare-bones", .root_source_file = .{
-        .path = "src/main.zig",
-    } });
-    const symbols = b.addStaticLibrary(.{ .name = "symbols", .root_source_file = .{ .path = "boot/bootsector.o" }, .target = loader.target, .optimize = .ReleaseFast });
-    symbols.addObjectFile("boot/loader.o");
+fn files(path: []const u8) !ArrayList([]u8) {
+    if (exists(path)) {
+        const arena = b.allocator;
+        var file_list = ArrayList([]u8).init(arena);
 
-    loader.setLinkerScriptPath(.{ .path = "linker.ld" });
+        var directory = try src.openIterableDir(path, .{});
+        defer directory.close();
 
-    loader.linkLibrary(symbols);
+        var it = directory.iterate();
+        while (try it.next()) |entry| {
+            if (entry.kind == .File) {
+                const file_path = try fs.path.join(arena, &[_][]const u8{
+                    "src",
+                    path,
+                    entry.name,
+                });
+                try file_list.append(file_path);
+            }
+        }
 
-    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code16.s" });
-    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/vesa.s" });
-    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code32.s" });
-    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/paging32.s" });
-    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code64.s" });
-    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/interrupt.s" });
-
-    const sleep_cmd_str = [_][]const u8{"sleep 5"};
-    const print_cmd_str = [_][]const u8{"echo hey"};
-
-    var print0 = System.ExecStep.create(b, &print_cmd_str);
-    var sleep0 = System.ExecStep.create(b, &sleep_cmd_str);
-    var print1 = System.ExecStep.create(b, &print_cmd_str);
-
-    loader.dependOn(&print0.step);
-    loader.dependOn(&sleep0.step);
-    loader.dependOn(&print1.step);
-
-    loader.optimize = b.standardOptimizeOption(.{});
-
-    return loader;
+        return file_list;
+    }
+    return BuildError.FileNotFound;
 }
+
+fn exists(path: []const u8) bool {
+    if (src.statFile(path)) |_| {
+        return true;
+    } else |_| {
+        return false;
+    }
+}
+
+// fn bootloader_setup(b: *Builder) *Build.LibExeObjStep {
+//     const loader = b.addExecutable(.{ .name = "boot", .root_source_file = .{
+//         .path = "src/main.zig",
+//     } });
+//     const symbols = b.addStaticLibrary(.{ .name = "symbols", .root_source_file = .{ .path = "boot/bootsector.o" }, .target = loader.target, .optimize = .ReleaseFast });
+//     symbols.addObjectFile("boot/loader.o");
+
+//     loader.setLinkerScriptPath(.{ .path = "linker.ld" });
+
+//     loader.linkLibrary(symbols);
+
+//     loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code16.s" });
+//     loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/vesa.s" });
+//     loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code32.s" });
+//     loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/paging32.s" });
+//     loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code64.s" });
+//     loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/interrupt.s" });
+
+//     const sleep_cmd_str = [_][]const u8{"sleep 5"};
+//     const print_cmd_str = [_][]const u8{"echo hey"};
+
+//     var print0 = System.ExecStep.create(b, &print_cmd_str);
+//     var sleep0 = System.ExecStep.create(b, &sleep_cmd_str);
+//     var print1 = System.ExecStep.create(b, &print_cmd_str);
+
+//     loader.dependOn(&print0.step);
+//     loader.dependOn(&sleep0.step);
+//     loader.dependOn(&print1.step);
+
+//     loader.optimize = b.standardOptimizeOption(.{});
+
+//     return loader;
+// }
 
 fn bootloader_target() CrossTarget {
     var disabled_features = Feature.Set.empty;
