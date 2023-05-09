@@ -32,6 +32,17 @@ pub fn read_idtr64 () Idtr64 {
     return idtr;
 }
 
+pub fn read_cr2 () u64 {
+    var cr2: u64 = undefined;
+    asm volatile (
+        \\.intel_syntax noprefix
+        \\mov rax, cr2
+        \\.att_syntax prefix
+        : [cr2] "={rax}" (cr2),
+    );
+    return cr2;
+}
+
 pub const Cr3 = packed struct {
     flags: u12,
     pml4: u52,

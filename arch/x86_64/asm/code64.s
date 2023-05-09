@@ -1,23 +1,20 @@
     .intel_syntax noprefix
 
-    .section .boot, "awx"
+    .section .boot64, "awx"
     .code64
 
     .extern _start
     .extern gdt64_offset_data
     .extern e820_memory_map
     .extern e820_memory_map_len
-    .extern kernel_image
-    .extern packet_buffer_offset
-    .extern packet_buffer_segment
 
-    .global stage_4
+    .global _code_64
     .global info
     .global __stub_interrupt
     .global __stub_interrupt_with_code
     .global delay
 
-stage_4:
+_code_64:
     cli
     mov ax, offset gdt64_offset_data
     mov ds, ax

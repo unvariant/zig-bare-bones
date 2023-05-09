@@ -1,4 +1,5 @@
 const std = @import("std");
+const mem = std.mem;
 const elf = std.elf;
 const builtin = std.builtin;
 const e820 = @import("e820.zig");
@@ -11,34 +12,30 @@ const rsdp = @import("rsdp.zig");
 const rsdt = @import("rsdt.zig");
 const paging = @import("paging/paging.zig");
 
-extern const __kernel_size: usize;
-extern const __kernel_image: usize;
+extern const vesa_framebuffer: usize;
+extern const vesa_width: u16;
+extern const vesa_height: u16;
+extern const vesa_pitch: u16;
+extern const vesa_bits_per_pixel: u8;
+extern const vesa_off_screen_offset: u32;
+extern const vesa_off_screen_size: u16;
+
+extern const __font_map: usize;
 
 export fn _start() callconv(.C) noreturn {
     pic.init();
-    term.init();
-
     idt.fill_table();
     idt.load();
+    term.init();
 
     rsdt.parse();
 
-    const kernel_size = @ptrToInt(&__kernel_size);
-    const kernel_image = @ptrCast(*const align(@alignOf(elf.Elf64_Ehdr)) [@sizeOf(elf.Elf64_Ehdr)]u8, &__kernel_image);
-
-    term.printf("kernel size: {x}h\n", .{kernel_size});
-    term.printf("kernel address: {x}h\n", .{@ptrToInt(kernel_image)});
-
-    const hdr = elf.Header.parse(kernel_image) catch |err| @panic(@errorName(err));
-    term.printf("kernel elf header: {}\n", .{hdr});
-
-    asm volatile (
-        \\.intel_syntax noprefix
-        \\int 0x40
-        \\int 0x87
-        \\cli
-        \\.att_syntax prefix
-    );
+    // asm volatile (
+    //     \\.intel_syntax noprefix
+    //     \\cli
+    //     \\.att_syntax prefix
+    // );
+    // _ = @intToPtr(* volatile u8, 0x8000000).*;
 
     @panic("halted execution.");
 }

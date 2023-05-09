@@ -9,7 +9,9 @@ DEBUGGER_FLAGS = -s -S
 build:
 	@set -e
 	make -C boot --file=boot.makefile build
-	# zig build
+	-rm -r zig-out zig-cache
+	zig build uninstall
+	zig build bootloader --verbose --verbose-link
 	cp boot/loader.bin disk/boot/loader.bin
 	cp zig-out/bin/bootloader.bin disk/boot/switch.bin
 	

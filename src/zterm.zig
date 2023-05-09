@@ -1,7 +1,18 @@
 const std = @import("std");
+const mem = std.mem;
 const fmt = std.fmt;
 const Writer = std.io.Writer;
 const pio = @import("pio.zig");
+const paging = @import("paging/paging.zig");
+
+
+extern const vesa_width: u16;
+extern const vesa_height: u16;
+extern const vesa_pitch: u16;
+extern const vesa_bits_per_pixel: u8;
+extern const vesa_framebuffer: usize;
+extern const __font_map: usize;
+
 
 pub const Color = enum(u4) {
     Black,
@@ -32,22 +43,27 @@ const TermChar = packed struct {
     color: TermColor,
 };
 
-const default_line: u8 = 0;
-const default_column: u8 = 0;
+const default_line: usize = 1;
+const default_column: usize = 1;
 const default_color: TermColor = TermColor{
     .fg = Color.BrightWhite,
     .bg = Color.Black,
 };
 
-var line: u16 = default_line;
-var column: u16 = default_column;
-var width: u16 = 80;
-var height: u16 = 25;
-var cursor_enabled = true;
-const vga: [*]volatile TermChar = @intToPtr([*]volatile TermChar, 0xB8000);
+var line: usize = default_line;
+var column: usize = default_column;
+var width: usize = undefined;
+var height: usize = undefined;
+var pixels_height: usize = undefined;
+var pixels_width: usize = undefined;
+var pixels_per_line: usize = undefined;
+var font_width: usize = 9;
+var font_height: usize = 17;
+var framebuffer: [*]volatile u32 = undefined;
+var font_map: *[4096]u8 = undefined;
 var color: TermColor = default_color;
 
-pub const writer = Writer(void, error{}, writeFn){ .context = {} };
+const writer = Writer(void, error{}, writeFn){ .context = {} };
 
 fn writeFn(_: void, string: []const u8) error{}!usize {
     write(string);
@@ -59,76 +75,42 @@ pub fn printf(comptime format: []const u8, args: anytype) void {
 }
 
 pub fn init() void {
-    if (cursor_enabled) {
-        enable_cursor();
-        set_cursor(0, 0);
-    } else {
-        disable_cursor();
+    pixels_height = @intCast(usize, vesa_height);
+    pixels_width = @intCast(usize, vesa_width);
+    pixels_per_line = @intCast(usize, vesa_pitch) / 4;
+
+    width = pixels_width / font_width;
+    height = pixels_height / font_height;
+    framebuffer = @intToPtr([*]volatile u32, vesa_framebuffer);
+    font_map = @ptrCast([*]u8, &__font_map)[0 .. 4096];
+
+    const pages: usize = mem.alignForward(@intCast(usize, vesa_pitch) * pixels_height, 0x1000) / 0x1000;
+    var page: usize = 0;
+    while (page < pages) : (page += 1) {
+        paging.identity_map(vesa_framebuffer + page * 0x1000);
     }
+
     clear();
 }
 
 pub fn line_start () void {
-    var cols = @intCast(i16, column);
-    while (cols >= 0) {
-        put_char_at(' ', line, @intCast(u16, cols));
-        cols -= 1;
+    var col: u16 = default_column;
+    while (col < column) : (col += 1) {
+        put_char_at(' ', line, col);
     }
-    column = 0;
+    column = default_column;
 }
 
-pub fn clear() void {
-    const empty = TermChar{
-        .inner = ' ',
-        .color = color,
-    };
-
-    var idx: u16 = 0;
-    var all: u16 = width * height;
-    while (idx < all) : ({
-        idx += 1;
-    }) {
-        vga[idx] = empty;
-    }
-}
-
-pub fn enable_cursor() void {
-    cursor_enabled = true;
-    pio.out8(0x3D4, 0x0A);
-    pio.out8(0x3D5, (pio.in8(0x3D5) & 0xC0) | 15);
-
-    pio.out8(0x3D4, 0x0B);
-    pio.out8(0x3D5, (pio.in8(0x3D5) & 0xE0) | 15);
-}
-
-pub fn disable_cursor() void {
-    cursor_enabled = false;
-    pio.out8(0x3D4, 0x0A);
-    pio.out8(0x3D5, 0x20);
-}
-
-pub fn set_cursor(tgt_line: u16, tgt_column: u16) void {
-    const pos: u16 = tgt_line * width + tgt_column;
-    const lo: u8 = @intCast(u8, pos & 0xFF);
-    const hi: u8 = @intCast(u8, (pos >> 8) & 0xFF);
-
-    pio.out8(0x3D4, 0x0F);
-    pio.out8(0x3D5, lo);
-    pio.out8(0x3D4, 0x0E);
-    pio.out8(0x3D5, hi);
-}
-
-pub fn update_cursor() void {
-    if (cursor_enabled) {
-        set_cursor(line, column);
-    }
+pub fn clear () void {
+    const size: usize = pixels_per_line * pixels_height;
+    mem.set(u32, @intToPtr([*]u32, vesa_framebuffer)[0 .. size], 0xFFFFFF);
 }
 
 pub fn set_color(new_color: TermColor) void {
     color = new_color;
 }
 
-pub fn next_line() void {
+fn next_line() void {
     column = default_column;
     line += 1;
     if (line >= height) {
@@ -138,14 +120,11 @@ pub fn next_line() void {
     }
 }
 
-pub fn put_char(ch: u8) void {
+fn put_char(ch: u8) void {
     if (ch == '\n') {
         next_line();
     } else {
-        vga[line * width + column] = TermChar{
-            .inner = ch,
-            .color = color,
-        };
+        put_char_at(ch, line, column);
         column += 1;
         if (column >= width) {
             next_line();
@@ -153,16 +132,27 @@ pub fn put_char(ch: u8) void {
     }
 }
 
-pub fn put_char_at(ch: u8, ln: u16, col: u16) void {
-    vga[ln * width + col] = TermChar{
-        .inner = ch,
-        .color = color,
-    };
+fn put_char_at(ch: u8, ln: usize, col: usize) void {
+    var corner = framebuffer + ln * font_height * pixels_per_line + col * font_width;
+    var offset: usize = 16 * @as(usize, ch);
+    var y: usize = 0;
+    while (y < 16) : (y += 1) {
+        var x: usize = 0;
+        var byte: u8 = font_map[offset + y];
+        while (x < 8) : (x += 1) {
+            if ((byte & 0x80) != 0) {
+                corner[x] = 0;
+            } else {
+                corner[x] = 0xFFFFFF;
+            }
+            byte <<= 1;
+        }
+        corner += pixels_per_line;
+    }
 }
 
-pub fn write(chars: []const u8) void {
+fn write(chars: []const u8) void {
     for (chars) |ch| {
         put_char(ch);
     }
-    update_cursor();
 }

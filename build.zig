@@ -9,67 +9,24 @@ const CrossTarget = std.zig.CrossTarget;
 const features = Target.x86.Feature;
 const fs = std.fs;
 const GeneralPurposeAllocator = std.heap.GeneralPurposeAllocator(.{});
+const System = @import("system.zig");
 
-const build_dir_str = [_][]const u8
-    { "mkdir"
-    , "-p", "zig-out/bin" };
-const strip_cmd_str = [_][]const u8
-    { "llvm-objcopy"
-    , "--strip-debug"
-    , "-I", "elf64-x86-64", "-O", "binary"
-    , "--binary-architecture=i386:x86-64"
-    , "kernel.elf", "zig-out/bin/kernel.bin" };
-const wrap_cmd_str = [_][]const u8
-    { "llvm-objcopy"
-    , "-I", "binary", "-O", "elf64-x86-64"
-    , "zig-out/bin/kernel.bin", "zig-out/bin/kernel.bin" };
-const rename_cmd_str = [_][]const u8
-    { "llvm-objcopy"
-    , "--redefine-sym", "_binary_zig_out_bin_kernel_bin_start=__kernel_start"
-    , "--redefine-sym", "_binary_zig_out_bin_kernel_bin_end=__kernel_end"
-    , "--redefine-sym", "_binary_zig_out_bin_kernel_bin_size=__kernel_size"
-    , "--rename-section", ".data=.kernel"
-    , "zig-out/bin/kernel.bin", "zig-out/bin/kernel.o" };
-const strip_bootloader_cmd_str = [_][]const u8
-    { "llvm-objcopy"
-    , "-I", "elf64-x86-64", "-O", "binary"
-    , "zig-out/bin/zig-bare-bones"
-    , "zig-out/bin/bootloader.bin" };
-const run_cmd_str = [_][]const u8
-    { "qemu-system-x86_64"
-    , "-no-reboot", "-no-shutdown"
-    , "-vga", "virtio"
-    , "-D", "qemu.log", "-d", "trace:ide_sector_read,trace:pic_interrupt,int,in_asm"
-    , "-drive", "format=raw,file=boot.dmg,if=ide" };
-const create_fat32_disk_str = [_][]const u8
-    { "hdiutil", "create"
-    , "-fs", "FAT32", "-ov", "-size", "48m"
-    , "-volname", "ZIG", "-format", "UDRW", "-srcfolder", "disk"
-    , "boot"
-    };
-const copy_bootsector_str = [_][]const u8
-    { "dd"
-    , "if=zig-out/bin/bootloader.bin"
-    , "of=boot.dmg"
-    , "conv=notrunc", "bs=446", "count=1"
-    };
-const copy_boot_signature_str = [_][]const u8
-    { "dd"
-    , "if=zig-out/bin/bootloader.bin"
-    , "of=boot.dmg"
-    , "conv=notrunc", "bs=1", "count=2", "skip=510", "seek=510"
-    };
-const create_bootable_partition_str = [_][]const u8
-    { "python3"
-    , "create_bootable_partition.py"
-    };
-
+const build_dir_str = [_][]const u8{ "mkdir", "-p", "zig-out/bin" };
+const strip_cmd_str = [_][]const u8{ "llvm-objcopy", "--strip-debug", "-I", "elf64-x86-64", "-O", "binary", "--binary-architecture=i386:x86-64", "kernel.elf", "zig-out/bin/kernel.bin" };
+const wrap_cmd_str = [_][]const u8{ "llvm-objcopy", "-I", "binary", "-O", "elf64-x86-64", "zig-out/bin/kernel.bin", "zig-out/bin/kernel.bin" };
+const rename_cmd_str = [_][]const u8{ "llvm-objcopy", "--redefine-sym", "_binary_zig_out_bin_kernel_bin_start=__kernel_start", "--redefine-sym", "_binary_zig_out_bin_kernel_bin_end=__kernel_end", "--redefine-sym", "_binary_zig_out_bin_kernel_bin_size=__kernel_size", "--rename-section", ".data=.kernel", "zig-out/bin/kernel.bin", "zig-out/bin/kernel.o" };
+const strip_bootloader_cmd_str = [_][]const u8{ "llvm-objcopy", "-I", "elf64-x86-64", "-O", "binary", "zig-out/bin/zig-bare-bones", "zig-out/bin/bootloader.bin" };
+const run_cmd_str = [_][]const u8{ "qemu-system-x86_64", "-no-reboot", "-no-shutdown", "-vga", "virtio", "-D", "qemu.log", "-d", "trace:ide_sector_read,trace:pic_interrupt,int,in_asm", "-drive", "format=raw,file=boot.dmg,if=ide" };
+const create_fat32_disk_str = [_][]const u8{ "hdiutil", "create", "-fs", "FAT32", "-ov", "-size", "48m", "-volname", "ZIG", "-format", "UDRW", "-srcfolder", "disk", "boot" };
+const copy_bootsector_str = [_][]const u8{ "dd", "if=zig-out/bin/bootloader.bin", "of=boot.dmg", "conv=notrunc", "bs=446", "count=1" };
+const copy_boot_signature_str = [_][]const u8{ "dd", "if=zig-out/bin/bootloader.bin", "of=boot.dmg", "conv=notrunc", "bs=1", "count=2", "skip=510", "seek=510" };
+const create_bootable_partition_str = [_][]const u8{ "python3", "create_bootable_partition.py" };
 
 pub fn build(b: *Builder) void {
     const kernel_step = b.step("kernel", "prepare the kernel");
 
-    const kernel = b.addStaticLibrary("kernel", "zig-out/bin/kernel.o");
-    
+    //const kernel = b.addStaticLibrary("kernel", "zig-out/bin/kernel.o");
+
     const loader_step = b.step("bootloader", "build the bootloader");
 
     const run_step = b.step("run", "run the bootloader");
@@ -78,16 +35,16 @@ pub fn build(b: *Builder) void {
 
     kernel_setup(b, kernel_step);
 
+    const strip_bootloader_cmd = b.addSystemCommand(&strip_bootloader_cmd_str);
+
     const loader = bootloader_setup(b);
-    loader.step.dependOn(kernel_step);
-    loader.setTarget(bootloader_target());
-    loader.linkLibrary(kernel);
-    loader.setBuildMode(b.standardReleaseOptions());
+    //loader.step.dependOn(kernel_step);
+    loader.target = bootloader_target();
+    //loader.linkLibrary(kernel);
     loader.install();
     loader_step.dependOn(&loader.step);
-
-    const strip_bootloader_cmd = b.addSystemCommand(&strip_bootloader_cmd_str);
-    strip_bootloader_cmd.step.dependOn(b.getInstallStep());
+    loader_step.dependOn(b.getInstallStep());
+    loader_step.dependOn(&strip_bootloader_cmd.step);
 
     const create_fat32_disk = b.addSystemCommand(&create_fat32_disk_str);
     const copy_bootsector = b.addSystemCommand(&copy_bootsector_str);
@@ -120,41 +77,46 @@ fn kernel_setup(b: *Builder, kernel_step: *Build.Step) void {
     kernel_step.dependOn(&rename_cmd.step);
 }
 
-fn load_assembly (loader: *Build.LibExeObjStep, directory: *fs.IterableDir) void {
+fn load_assembly(loader: *Build.LibExeObjStep, directory: *fs.IterableDir) void {
     _ = loader;
     _ = directory;
 }
 
 fn bootloader_setup(b: *Builder) *Build.LibExeObjStep {
-    const loader = b.addExecutable("zig-bare-bones", "src/main.zig");
+    const loader = b.addExecutable(.{ .name = "zig-bare-bones", .root_source_file = .{
+        .path = "src/main.zig",
+    } });
+    const symbols = b.addStaticLibrary(.{ .name = "symbols", .root_source_file = .{ .path = "boot/bootsector.o" }, .target = loader.target, .optimize = .ReleaseFast });
+    symbols.addObjectFile("boot/loader.o");
 
-    loader.setLinkerScriptPath(FileSource {
-        .path = "linker.ld"
-    });
+    loader.setLinkerScriptPath(.{ .path = "linker.ld" });
 
-    loader.addAssemblyFileSource(FileSource {
-        .path = "arch/x86_64/asm/stage_1.s"
-    });
-    loader.addAssemblyFileSource(FileSource {
-        .path = "arch/x86_64/asm/stage_2.s"
-    });
-    loader.addAssemblyFileSource(FileSource {
-        .path = "arch/x86_64/asm/stage_3.s"
-    });
-    loader.addAssemblyFileSource(FileSource {
-        .path = "arch/x86_64/asm/stage_4.s"
-    });
-    loader.addAssemblyFileSource(FileSource {
-        .path = "arch/x86_64/asm/vesa.s"
-    });
-    loader.addAssemblyFileSource(FileSource {
-        .path = "arch/x86_64/asm/interrupt.s"
-    });
+    loader.linkLibrary(symbols);
+
+    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code16.s" });
+    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/vesa.s" });
+    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code32.s" });
+    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/paging32.s" });
+    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/code64.s" });
+    loader.addAssemblyFileSource(.{ .path = "arch/x86_64/asm/interrupt.s" });
+
+    const sleep_cmd_str = [_][]const u8{"sleep 5"};
+    const print_cmd_str = [_][]const u8{"echo hey"};
+
+    var print0 = System.ExecStep.create(b, &print_cmd_str);
+    var sleep0 = System.ExecStep.create(b, &sleep_cmd_str);
+    var print1 = System.ExecStep.create(b, &print_cmd_str);
+
+    loader.dependOn(&print0.step);
+    loader.dependOn(&sleep0.step);
+    loader.dependOn(&print1.step);
+
+    loader.optimize = b.standardOptimizeOption(.{});
 
     return loader;
 }
 
-fn bootloader_target () CrossTarget {
+fn bootloader_target() CrossTarget {
     var disabled_features = Feature.Set.empty;
     var enabled_features = Feature.Set.empty;
 
@@ -164,7 +126,7 @@ fn bootloader_target () CrossTarget {
     disabled_features.addFeature(@enumToInt(features.avx));
     disabled_features.addFeature(@enumToInt(features.avx2));
     enabled_features.addFeature(@enumToInt(features.soft_float));
- 
+
     return CrossTarget{
         .cpu_arch = Target.Cpu.Arch.x86_64,
         .os_tag = Target.Os.Tag.freestanding,

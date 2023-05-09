@@ -165,12 +165,10 @@ sector_loop:
     # .inline_start
     pushad
     mov   ebx,   edi
-    mov   fs,    word ptr [file_closure_segment]
-    call  fs:word ptr [file_closure_offset]
+    call  word ptr [file_closure_pointer]
     jnc   directory_found
     popad
-    jmp   directory_not_found
-    //jnz   directory_not_found
+    jnz   directory_not_found
     # .inline_end
 
     add   eax,   1
@@ -294,9 +292,7 @@ boot_media: .byte 0
 file_attribute: .byte 0x10
 file_name: .2byte offset boot_directory
 
-file_closure_pointer:
-file_closure_offset: .2byte offset compare_file
-file_closure_segment: .2byte 0
+file_closure_pointer: .2byte offset compare_file
 
 boot_directory: .ascii "BOOT       "
 loader_file:    .ascii "LOADER  BIN"

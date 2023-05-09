@@ -17,7 +17,7 @@ const ACPI_SDT_Header = extern struct {
 
 
 fn log_signature (header: *align(1) ACPI_SDT_Header) void {
-    zterm.printf("{s}\n", .{header.signature});
+    zterm.printf("found table: {s}\n", .{header.signature});
 }
 
 pub fn parse () void {

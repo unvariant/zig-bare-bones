@@ -7,6 +7,7 @@ zig-debug/
 zig-cache/
 zig-out/
 bin/
+zig/
 
 # files routinely created while debugging
 **/*.readelf

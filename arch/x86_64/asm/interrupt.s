@@ -1,6 +1,5 @@
     .intel_syntax noprefix
-
-    .section .boot, "awx"
+    .section .boot64, "awx"
     .code64
 
     .extern handle_interrupt

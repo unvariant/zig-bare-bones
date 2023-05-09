@@ -4,6 +4,9 @@
 
     
     .global  _loader_start
+    .global  print_str
+    .global  print_hex
+    .global  hang
 
 
     .extern  map_directory
@@ -17,31 +20,39 @@
 
 
 _loader_start:
+    cli
     mov   sp,    0x7C00
-    call  root_file
 
-    mov   bx,    offset target
+    /// populate the root entry so find_file can search for it properly
+    mov   esi,   offset root_entry
+    mov   bx,    word ptr [root_cluster_number]
+    mov   word ptr [esi + 26], bx
+    mov   bx,    word ptr [root_cluster_number + 2]
+    mov   word ptr [esi + 20], bx
+
+    mov   bx,    offset boot_directory
+    mov   dl,    0x10
+    call  find_file
+    jc    fserror
+
+    mov   bx,    offset switch_binary
     mov   dl,    0x20
     call  find_file
     jc    fserror
 
-    mov   cx,    32
-    call  print_hex
-
-    mov   edi,   0xA000
+    mov   edi,   0x8000
     call  read_file
     jc    rferror
 
-    mov   esi,   offset target
-    call  print_str
+    jmp   0x8000
 
-    jmp   hang
-
+/// file system error
 fserror:
     mov   si,    offset fserror_str
     call  print_str
     jmp   hang
 
+/// read file error
 rferror:
     mov   si,    offset rferror_str
     call  print_str
@@ -49,17 +60,6 @@ rferror:
 
 hang:
     jmp   hang
-
-
-root_file:
-    push ax
-    mov   esi,   offset root_entry
-    mov   ax,    word ptr [root_cluster_number]
-    mov   word ptr [esi + 26], ax
-    mov   ax,    word ptr [root_cluster_number + 2]
-    mov   word ptr [esi + 20], ax
-    pop ax
-    ret
 
 
 /*
@@ -78,8 +78,7 @@ find_file:
     mov   byte ptr [file_attribute], dl
     mov   word ptr [file_name], bx
 
-    mov   dword ptr [file_closure_pointer], offset compare_file
-    shl   word ptr [file_closure_pointer + 2], 12
+    mov   word ptr [file_closure_pointer], offset compare_file
 
     mov   bx,    word ptr [esi + 20]
     shl   ebx,   16
@@ -105,8 +104,7 @@ read_file:
     mov   dword ptr [read_file_closure$size], eax
     mov   dword ptr [read_file_closure$destination], edi
 
-    mov   dword ptr [file_closure_pointer], offset read_file_closure
-    shl   word ptr [file_closure_pointer + 2], 12
+    mov   word ptr [file_closure_pointer], offset read_file_closure
 
     mov   bx,    word ptr [esi + 20]
     shl   ebx,   16
@@ -128,17 +126,20 @@ read_file_closure:
     mov   ecx,   eax
     cmp   ecx,   dword ptr [read_file_closure$size]
     cmovg ecx,   dword ptr [read_file_closure$size]
-    .byte 0x66
-    rep   movsb
+    rep   movsb [edi], [esi]
 
     add   dword ptr [read_file_closure$destination], eax
     sub   dword ptr [read_file_closure$size], eax
-    lahf
-    xor   ah,    1
+    jle   1f
+    mov   ah,    0xFF
     sahf
-
+0:
     popad
     ret
+
+1:
+    clc
+    jmp   0f
 
 read_file_closure$size: .4byte 0
 read_file_closure$destination: .4byte 0
@@ -203,4 +204,7 @@ hex:
 root_entry: .space 32
 fserror_str: .asciz "fs error"
 rferror_str: .asciz "rf error"
-target: .ascii "CONFIG     "
+boot_directory: .ascii "BOOT       "
+switch_binary:  .ascii "SWITCH  BIN"
+
+    .org    512

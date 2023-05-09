@@ -1,9 +1,9 @@
-ENTRY(_boot_start)
+ENTRY(_code_16)
 
 SECTIONS
 {    
-    font_map = 0x1000;
-    e820_memory_map = 0x7000;
+    __font_map = 0x1000;
+    __e820_memory_map = 0x2000;
 
     .boot (0x7C00) (NOLOAD) : {
         *(.boot)
@@ -13,10 +13,14 @@ SECTIONS
         *(.loader)
     }
 
-    . = 0x8000;
-    __boot_start = .;
-    .bootsect : {
-        KEEP(*(.bootsect))
+    .boot16 (0x8000) : {
+        KEEP(*(.boot16))
+    }
+    .boot32 : {
+        KEEP(*(.boot32))
+    }
+    .boot64 : {
+        KEEP(*(.boot64))
     }
 
     . = ALIGN(4K);
@@ -25,11 +29,11 @@ SECTIONS
     __page_table_memory_end = .;
 
     .text : ALIGN(4K) {
-        *(.text)
+        KEEP(*(.text))
     }
 
     .rodata : ALIGN(4K) {
-        *(.rodata)
+        KEEP(*(.rodata))
         __debug_info_start = .;
         KEEP(*(.debug_info))
         __debug_info_end = .;
@@ -55,7 +59,4 @@ SECTIONS
         *(COMMON)
         *(.bss)
     }
-
-    __boot_end = .;
-    __boot_sectors = (__boot_end - __boot_start) >> 9;
 }

@@ -623,6 +623,7 @@ fn dump_context(context: *Context) callconv(.C) void {
         \\rbx={X:0>16}h rdx={X:0>16}h rcx={X:0>16}h fs={X:0>4}h
         \\rax={X:0>16}h rip={X:0>16}h                       gs={X:0>4}h
         \\gdt={X:0>16}h idt={X:0>16}h
+        \\cr2={X:0>16}h
         \\eflags={X:0>16}h
     ,
     .{ context.general_registers.r15, context.general_registers.r14, context.general_registers.r13, context.segment_registers.es
@@ -632,16 +633,17 @@ fn dump_context(context: *Context) callconv(.C) void {
      , context.general_registers.rbx, context.general_registers.rdx, context.general_registers.rcx, context.segment_registers.fs
      , context.general_registers.rax, context.ret_addr,                                             context.segment_registers.gs
      , intrin.read_gdtr64().offset, intrin.read_idtr64().offset
+     , intrin.read_cr2()
      , context.eflags
      });
 }
 
 export fn handle_interrupt(context: *Context) callconv(.C) void {
-    term.printf("interrupt: {x}h\nerror_code: {x}h\n", .{context.intn, context.error_code});
+    term.printf("interrupt: {X:0>2}h\nerror_code: {X}h\n", .{context.intn, context.error_code});
     switch (context.intn) {
         pic.PRIMARY_PIC_VECTOR + 1 => {
             var key = pio.in8(0x60);
-            term.printf("keyboard interrupt: key: {x}h\n", .{key});
+            term.printf("keyboard interrupt: key: {X:02}h\n", .{key});
         },
         else => {},
     }
@@ -654,7 +656,7 @@ export fn handle_interrupt(context: *Context) callconv(.C) void {
     }
 
     switch (context.intn) {
-        6 => {
+        0x06, 0x0E => {
             dump_context(context);
             hang();
         },
