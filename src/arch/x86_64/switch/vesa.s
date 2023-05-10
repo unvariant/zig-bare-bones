@@ -103,7 +103,7 @@ vesa$error:
     mov   ds,    si
     mov   si,    offset vesa$error_str
     call2 print_str
-    jmp   hang
+0:  jmp   0b
 
 
 vesa$print_str:

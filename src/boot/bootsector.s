@@ -1,5 +1,5 @@
     .intel_syntax noprefix
-    .section .boot, "awx"
+    .section .bootsector, "awx"
     .code16
 
 
@@ -12,6 +12,8 @@
     .global  file_attribute
     .global  file_name
     .global  bytes_per_sector
+
+    .extern  _loader_start
 
 
 bios_parameter_block:

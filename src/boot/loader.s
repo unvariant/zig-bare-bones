@@ -44,7 +44,9 @@ _loader_start:
     call  read_file
     jc    rferror
 
-    jmp   0x8000
+    .att_syntax prefix
+    jmp   $0x8000, $0
+    .intel_syntax noprefix
 
 /// file system error
 fserror:

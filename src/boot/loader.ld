@@ -2,8 +2,8 @@ ENTRY(_loader_start)
 
 SECTIONS
 {
-    .boot (0x7C00) (NOLOAD) : {
-        *(.boot)
+    .bootsector(0x7C00) : {
+        *(.bootsector)
     }
 
     .loader (0x7E00) : {

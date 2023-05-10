@@ -5,14 +5,12 @@ const Writer = std.io.Writer;
 const pio = @import("pio.zig");
 const paging = @import("paging/paging.zig");
 
-
 extern const vesa_width: u16;
 extern const vesa_height: u16;
 extern const vesa_pitch: u16;
 extern const vesa_bits_per_pixel: u8;
 extern const vesa_framebuffer: usize;
 extern const __font_map: usize;
-
 
 pub const Color = enum(u4) {
     Black,
@@ -82,7 +80,7 @@ pub fn init() void {
     width = pixels_width / font_width;
     height = pixels_height / font_height;
     framebuffer = @intToPtr([*]volatile u32, vesa_framebuffer);
-    font_map = @ptrCast([*]u8, &__font_map)[0 .. 4096];
+    font_map = @ptrCast([*]u8, &__font_map)[0..4096];
 
     const pages: usize = mem.alignForward(@intCast(usize, vesa_pitch) * pixels_height, 0x1000) / 0x1000;
     var page: usize = 0;
@@ -93,7 +91,7 @@ pub fn init() void {
     clear();
 }
 
-pub fn line_start () void {
+pub fn line_start() void {
     var col: u16 = default_column;
     while (col < column) : (col += 1) {
         put_char_at(' ', line, col);
@@ -101,9 +99,9 @@ pub fn line_start () void {
     column = default_column;
 }
 
-pub fn clear () void {
+pub fn clear() void {
     const size: usize = pixels_per_line * pixels_height;
-    mem.set(u32, @intToPtr([*]u32, vesa_framebuffer)[0 .. size], 0xFFFFFF);
+    @memset(@intToPtr([*]u32, vesa_framebuffer)[0..size], 0xFFFFFF);
 }
 
 pub fn set_color(new_color: TermColor) void {

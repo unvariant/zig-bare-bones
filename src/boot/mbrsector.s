@@ -1,9 +1,14 @@
     .intel_syntax noprefix
-    .section .mbr, "awx"
+    .section .mbrsector, "awx"
     .code16
 
+
     .global  _mbr_relocate
+
+    .extern  _boot_start
+
     .equ     BASE, 0x600
+
 
 _mbr_relocate:
     cli
@@ -20,7 +25,7 @@ _mbr_relocate:
     mov   cx,   256
     rep   movsw
 
-    jmp   0:_mbr_start
+    jmp   _mbr_start
 
 _mbr_start:
     mov   byte ptr [boot_media], dl
@@ -77,7 +82,7 @@ search_partitions:
     mov   si,    word ptr [partition_offset]
     mov   sp,    0x7C00
 
-    jmp   0x7C00
+    jmp   _boot_start
 
 continue_search:
     add   bx,    0x10

@@ -3,7 +3,8 @@
 	.code16
 
     .global _code_16
-
+    .global print_hex
+    .global print_str
     .global e820_memory_map_len
     .global gdt32_desc
     .global gdt32_offset_code
@@ -12,7 +13,6 @@
 
     .extern read_file
     .extern find_file
-    .extern hang
     .extern print_str
     .extern print_hex
 
@@ -61,7 +61,7 @@ A20_set:
 
     mov   si,    offset _e820_fail
     call2 print_str
-    jmp   hang
+0:  jmp   0b
 
 e820_success:
 	mov   word ptr [e820_memory_map_len], bp
@@ -97,6 +97,62 @@ e820_success:
     mov   eax,   offset _code_32
     push  eax
     retf
+
+
+print_str:
+    pushad
+    lodsb
+    test  al,    al
+    jz    0f
+    mov   bx,    0x000F
+    mov   ah,    0x0E
+1:
+    int   0x10
+    lodsb
+    test  al,    al
+    jnz   1b
+0:
+    mov   al,    '\r'
+    int   0x10
+    mov   al,    '\n'
+    int   0x10
+    popad
+    ret
+
+
+print_hex:
+    pushad
+    mov   bp,    sp
+
+    test  cx,    cx
+    jz    0f
+1:
+    lodsb
+    mov   ah,    al
+    shr   ah,    4
+    and   al,    0x0F
+    call  hex
+    xchg  ah,    al
+    call  hex
+    push  ax
+    dec   cx
+    jnz   1b
+0:
+    mov   si,    sp
+    call  print_str
+
+    mov   sp,    bp
+    popad
+    ret
+
+
+hex:
+    add   al,    '0'
+    cmp   al,    '9'
+    jle   1f
+    add   al,     'A' - '0' - 10
+1:
+    ret
 
 
 # uses eax = 0xe820, int 15h to get memory map
