@@ -45,7 +45,7 @@ _loader_start:
     jc    rferror
 
     .att_syntax prefix
-    jmp   $0x8000, $0
+    jmp   $0, $0x8000
     .intel_syntax noprefix
 
 /// file system error

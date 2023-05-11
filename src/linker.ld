@@ -16,6 +16,9 @@ SECTIONS
     .boot16 (0x8000) : {
         KEEP(*(.boot16))
     }
+    .vesa : {
+        KEEP(*(.vesa))
+    }
     .boot32 : {
         KEEP(*(.boot32))
     }

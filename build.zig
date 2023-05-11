@@ -1,5 +1,5 @@
 const std = @import("std");
-const builtin = std.builtin;
+const builtin = @import("builtin");
 const Build = std.build;
 const Builder = Build.Builder;
 const FileSource = Build.FileSource;
@@ -21,29 +21,116 @@ const fs = std.fs;
 const debug = std.debug;
 const mem = std.mem;
 
-const run_cmd_str = [_][]const u8{ "qemu-system-x86_64", "-no-reboot", "-no-shutdown", "-vga", "virtio", "-D", "qemu.log", "-d", "trace:ide_sector_read,trace:pic_interrupt,int,in_asm", "-drive", "format=raw,file=boot.dmg,if=ide" };
-const create_fat32_disk_str = [_][]const u8{ "hdiutil", "create", "-fs", "FAT32", "-ov", "-size", "48m", "-volname", "ZIG", "-format", "UDRW", "-srcfolder", "disk", "boot" };
-const copy_bootsector_str = [_][]const u8{ "dd", "if=zig-out/bin/bootloader.bin", "of=boot.dmg", "conv=notrunc", "bs=446", "count=1" };
-const copy_boot_signature_str = [_][]const u8{ "dd", "if=zig-out/bin/bootloader.bin", "of=boot.dmg", "conv=notrunc", "bs=1", "count=2", "skip=510", "seek=510" };
-const create_bootable_partition_str = [_][]const u8{ "python3", "create_bootable_partition.py" };
-
 var b: *Builder = undefined;
 
 pub fn build(builder: *Builder) void {
     b = builder;
 
-    const boot = bootloader() catch |e| @panic(@errorName(e));
-    _ = boot;
+    var boot = bootloader() catch |e| @panic(@errorName(e));
+    var disk = bootdisk(boot) catch |e| @panic(@errorName(e));
+    var run = b.step("run", "run the os/bootloader/whatever the hell this is");
+    // add "-d", "trace:ide_sector_read,trace:pic_interrupt,int,in_asm", for stupid amount of logging
+    var run_cmd = b.addSystemCommand(&.{ "qemu-system-x86_64", "-no-reboot", "-no-shutdown", "-vga", "virtio", "-D", "qemu.log", "-drive", "format=raw,file=disk.img,if=ide" });
+    run_cmd.step.dependOn(disk);
+    run.dependOn(&run_cmd.step);
 }
 
 const BuildError = error{
     FileNotFound,
 };
 
-fn bootloader() !*Build.Step {
+fn bootdisk(boot: *Step) !*Step {
+    const step = b.step("disk", "build fat32 disk");
+
+    const disk_create = b.addSystemCommand(&.{
+        "dd",    "if=/dev/zero", "of=disk.img",
+        "bs=1M", "count=32",
+    });
+    const disk_format = b.addSystemCommand(&.{
+        "fdisk",
+        "disk.img",
+    });
+    disk_format.stdin = "n\np\n1\n\n\nt\n0c\na\nw\n";
+    disk_format.stdio = .{
+        .check = ArrayList(Step.Run.StdIo.Check).init(b.allocator),
+    };
+    const configure_mtools = b.addSystemCommand(&.{
+        "sh", "-c", "cp mtools.conf ~/.mtoolsrc",
+    });
+    const disk_fat32 = b.addSystemCommand(&.{ "mformat", "-F", "-B", "zig-out/load/bootsector.bin", "C:" });
+    const make_boot = b.addSystemCommand(&.{
+        "mmd", "BOOT",
+    });
+    const copy_loader = b.addSystemCommand(&.{
+        "mcopy", "zig-out/boot/loader.bin", "C:/BOOT/LOADER.BIN",
+    });
+    const copy_switch = b.addSystemCommand(&.{
+        "mcopy", "zig-out/boot/switch.bin", "C:/BOOT/SWITCH.BIN",
+    });
+    const copy_mbr_body = b.addSystemCommand(&.{
+        "dd", "if=zig-out/load/mbrsector.bin", "of=disk.img", "conv=notrunc", "bs=446", "count=1",
+    });
+    const copy_mbr_signature = b.addSystemCommand(&.{
+        "dd", "if=zig-out/load/mbrsector.bin", "of=disk.img", "conv=notrunc", "bs=2", "count=1", "seek=510",
+    });
+
+    disk_create.step.dependOn(boot);
+
+    disk_format.step.dependOn(&disk_create.step);
+
+    disk_fat32.step.dependOn(&configure_mtools.step);
+    disk_fat32.step.dependOn(&disk_format.step);
+    make_boot.step.dependOn(&disk_fat32.step);
+    copy_loader.step.dependOn(&make_boot.step);
+    copy_switch.step.dependOn(&copy_loader.step);
+
+    copy_mbr_body.step.dependOn(&copy_switch.step);
+    copy_mbr_signature.step.dependOn(&copy_mbr_body.step);
+    step.dependOn(&copy_mbr_signature.step);
+
+    // switch (builtin.os.tag) {
+    //     .linux => {
+    //         // TODO: make sure this works
+    //         // const disk_create = b.addSystemCommand(&.{
+    //         //     "dd",    "if=/dev/zero", "of=disk.img",
+    //         //     "bs=1M", "count=32",
+    //         // });
+    //         // const disk_format = b.addSystemCommand(&.{
+    //         //     "fdisk",
+    //         //     "disk.img",
+    //         // });
+    //         // disk_format.stdin = "n\np\n1\n\n\nt\n0c\na\nw\n";
+    //         // disk_format.stdio = .{
+    //         //     .check = ArrayList(Step.Run.StdIo.Check).init(b.allocator),
+    //         // };
+    //         // const configure_mtools = b.addSystemCommand(&.{
+    //         //     "sh", "-c", "cp .mtoolsrc ~/.mtoolsrc",
+    //         // });
+    //         // const disk_fat32 = b.addSystemCommand(&.{
+    //         //     "mformat", "-F", "-B", "zig-out/load/bootsector.bin",
+    //         // });
+    //     },
+    //     .macos => {
+    //         const disk_fat32 = b.addSystemCommand(&.{ "hdiutil", "create", "-ov", "-size", "64m", "-volname", "ZIG_OS", "-fs", "FAT32", "-layout", "MBRSPUD", "-format", "UDRW", "-srcfolder", "zig-out/disk", "disk" });
+    //         const rename = b.addSystemCommand(&.{ "mv", "disk.dmg", "disk.img" });
+    //         const make_bootable = b.addSystemCommand(&.{
+    //             "python3", "create_bootable_partition.py", "disk.img", "disk.img", "zig-out/load/bootsector.bin",
+    //         });
+    //         disk_fat32.step.dependOn(boot);
+    //         rename.step.dependOn(&disk_fat32.step);
+    //         make_bootable.step.dependOn(&rename.step);
+    //         copy_mbr_body.step.dependOn(&make_bootable.step);
+    //     },
+    //     else => step.fail("unsupported host os: {s}\n", @tagName(builtin.os.tag)),
+    // }
+
+    return step;
+}
+
+fn bootloader() !*Step {
     const step = b.step("boot", "build the bootloader");
 
-    const boot = b.addExecutable(.{
+    const final = b.addExecutable(.{
         .name = "switch.bin",
         .root_source_file = .{
             .path = "src/main.zig",
@@ -51,18 +138,22 @@ fn bootloader() !*Build.Step {
         .target = bootloader_target(),
     });
 
-    const boot_files = try files("src/arch");
-    defer boot_files.deinit();
-    for (boot_files.items) |path| {
+    const final_files = try files("src/arch", .{});
+    defer final_files.deinit();
+    for (final_files.items) |path| {
         if (mem.eql(u8, ".s", fs.path.extension(path))) {
-            boot.addAssemblyFile(path);
+            final.addAssemblyFile(path);
         }
     }
 
-    boot.setLinkerScriptPath(.{
+    final.setLinkerScriptPath(.{
         .path = "src/linker.ld",
     });
-    b.installArtifact(boot);
+    const strip_final = b.addObjCopy(final.getOutputSource(), .{
+        .basename = "switch",
+        .format = .bin,
+    });
+    step.dependOn(&b.addInstallFile(strip_final.getOutputSource(), "boot/switch.bin").step);
 
     const symbols = b.addStaticLibrary(.{
         .name = "symbols",
@@ -70,13 +161,17 @@ fn bootloader() !*Build.Step {
         .optimize = .ReleaseFast,
     });
 
-    const loader_files = try files("src/boot");
-    defer loader_files.deinit();
-    for (loader_files.items) |path| {
+    const boot_files = try files("src/boot", .{
+        .ignore_directories = &.{
+            "load",
+        },
+    });
+    defer boot_files.deinit();
+    for (boot_files.items) |path| {
         if (mem.eql(u8, ".s", fs.path.extension(path))) {
-            const loader_file = try assemble(path);
-            symbols.step.dependOn(&loader_file.step);
-            symbols.addObjectFile(loader_file.output_path);
+            const obj = try assemble(path);
+            symbols.step.dependOn(&obj.step);
+            symbols.addObjectFile(obj.output_path);
 
             const stem = fs.path.stem(path);
             const elf = b.addExecutable(.{
@@ -84,8 +179,8 @@ fn bootloader() !*Build.Step {
                 .target = bootloader_target(),
                 .optimize = .ReleaseSmall,
             });
-            elf.linker_script = loader_file.linker_script;
-            elf.addObjectFile(loader_file.output_path);
+            elf.linker_script = obj.linker_script;
+            elf.addObjectFile(obj.output_path);
             elf.linkLibrary(symbols);
 
             const bin = b.addObjCopy(elf.getOutputSource(), .{
@@ -93,16 +188,51 @@ fn bootloader() !*Build.Step {
                 .format = .bin,
                 .only_section = b.fmt(".{s}", .{stem}),
             });
-            const output_path = b.fmt("{s}{s}{s}", .{
-                "bin",
-                fs.path.sep_str,
+
+            const output_path = try fs.path.join(b.allocator, &.{
+                "boot",
                 b.fmt("{s}.bin", .{stem}),
             });
-            _ = b.addInstallFile(bin.getOutputSource(), output_path);
+            step.dependOn(&b.addInstallFile(bin.getOutputSource(), output_path).step);
+            b.allocator.free(output_path);
+        }
+    }
+
+    const load_files = try files("src/boot/load", .{});
+    defer load_files.deinit();
+    for (load_files.items) |path| {
+        if (mem.eql(u8, ".s", fs.path.extension(path))) {
+            const obj = try assemble(path);
+            symbols.step.dependOn(&obj.step);
+            symbols.addObjectFile(obj.output_path);
+
+            const stem = fs.path.stem(path);
+            const elf = b.addExecutable(.{
+                .name = b.fmt("{s}.elf", .{stem}),
+                .target = bootloader_target(),
+                .optimize = .ReleaseSmall,
+            });
+            elf.linker_script = obj.linker_script;
+            elf.addObjectFile(obj.output_path);
+            elf.linkLibrary(symbols);
+
+            const bin = b.addObjCopy(elf.getOutputSource(), .{
+                .basename = stem,
+                .format = .bin,
+                .only_section = b.fmt(".{s}", .{stem}),
+            });
+
+            const output_path = try fs.path.join(b.allocator, &.{
+                "load",
+                b.fmt("{s}.bin", .{stem}),
+            });
+            step.dependOn(&b.addInstallFile(bin.getOutputSource(), output_path).step);
+            b.allocator.free(output_path);
         }
     }
 
     step.dependOn(b.getInstallStep());
+
     return step;
 }
 
@@ -128,7 +258,10 @@ fn assemble(path: []const u8) !*AssemblyStep {
     return step;
 }
 
-fn files(path: []const u8) !ArrayList([]u8) {
+fn files(path: []const u8, options: struct {
+    recursive: bool = true,
+    ignore_directories: []const []const u8 = &.{},
+}) !ArrayList([]u8) {
     if (exists(path)) {
         const arena = b.allocator;
         var file_list = ArrayList([]u8).init(arena);
@@ -137,7 +270,7 @@ fn files(path: []const u8) !ArrayList([]u8) {
         defer directory.close();
 
         var it = directory.iterate();
-        while (try it.next()) |entry| {
+        outer: while (try it.next()) |entry| {
             const file_path = try fs.path.join(arena, &[_][]const u8{
                 path,
                 entry.name,
@@ -147,9 +280,14 @@ fn files(path: []const u8) !ArrayList([]u8) {
                     try file_list.append(file_path);
                 },
                 .Directory => {
-                    var sub_files = try files(file_path);
-                    try file_list.appendSlice(sub_files.items);
-                    sub_files.deinit();
+                    if (options.recursive) {
+                        for (options.ignore_directories) |name| {
+                            if (mem.eql(u8, name, entry.name)) continue :outer;
+                        }
+                        var sub_files = try files(file_path, options);
+                        try file_list.appendSlice(sub_files.items);
+                        sub_files.deinit();
+                    }
                 },
                 else => arena.free(file_path),
             }

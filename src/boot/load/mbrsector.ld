@@ -6,4 +6,9 @@ SECTIONS
     .mbrsector : {
         KEEP(*(.mbrsector))
     }
+
+    . = 0x7C00;
+    .bootsector : {
+        KEEP(*(.bootsector))
+    }
 }

@@ -1,5 +1,5 @@
     .intel_syntax noprefix
-    .section .boot16, "awx"
+    .section .vesa, "awx"
     .code16
 
 
@@ -37,24 +37,24 @@ vesa:
 
     mov   ax,    0x4F00
     mov   di,    offset vbe_info
-    call2 vesa$call
+    call  vesa$call
 
     cmp   dword ptr [vbe_info], 'V' | ('E' << 8) | ('S' << 16) | ('A' << 24)
     jnz   vesa$error
 
     mov   di,    offset vbe_info$oem
-    call2 vesa$print_str
+    call  vesa$print_str
     mov   di,    offset vbe_info$vendor
-    call2 vesa$print_str
+    call  vesa$print_str
     mov   di,    offset vbe_info$name
-    call2 vesa$print_str
+    call  vesa$print_str
     mov   di,    offset vbe_info$product_revision
-    call2 vesa$print_str
+    call  vesa$print_str
     
     lds   si,    [vbe_info$modes]
 vesa$iterate:
     mov   cx,    2
-    call2 print_hex
+    call  print_hex
 
     lodsw
     cmp   ax,    0xFFFF
@@ -63,7 +63,7 @@ vesa$iterate:
     mov   cx,    ax
     mov   ax,    0x4F01
     mov   di,    offset vbe_mode
-    call2 vesa$call
+    call  vesa$call
 
     cmp   word ptr [vbe_mode$width], 700
     jl    vesa$iterate
@@ -77,18 +77,23 @@ vesa$iterate:
     xor   si,    si
     mov   ds,    si
     mov   si,    offset vesa$mode_found
-    call2 print_str
+    call  print_str
 
     mov   bx,    cx
     or    bx,    1 << 14
     mov   ax,    0x4F02
     mov   di,    0
-    call2 vesa$call
+    call  vesa$call
+
+    xor   si,    si
+    mov   ds,    si
+    mov   si,    offset vesa$init_str
+    call  print_str
 
     popad
     pop   ds
     pop   es
-    ret2
+    ret 
 
 vesa$call:
     push  es
@@ -96,24 +101,25 @@ vesa$call:
     pop   es
     cmp   ax,    0x004F
     jnz   vesa$error
-    ret2
+    ret 
 
 vesa$error:
     xor   si,    si
     mov   ds,    si
     mov   si,    offset vesa$error_str
-    call2 print_str
+    call  print_str
 0:  jmp   0b
 
 
 vesa$print_str:
     push  ds
     lds   si,    [di]
-    call2 print_str
+    call  print_str
     pop   ds
-    ret2
+    ret 
 
 
+vesa$init_str: .asciz "beginning vesa scan"
 vesa$error_str: .asciz "vesa error occurred"
 vesa$mode_found: .asciz "vesa mode found"
 

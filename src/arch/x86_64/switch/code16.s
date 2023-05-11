@@ -10,12 +10,6 @@
     .global gdt32_offset_code
     .global gdt32_offset_data
 
-
-    .extern read_file
-    .extern find_file
-    .extern print_str
-    .extern print_hex
-
     .extern _code_32
 
     .equ TERMINAL_COLOR, 0x0F
@@ -56,11 +50,11 @@ check_A20:                 # fast A20 enable, may not work on all chipsets
 A20_set:
 
     mov   di,    offset __e820_memory_map
-    call2 do_e820
+    call  do_e820
 	jnc   e820_success
 
     mov   si,    offset _e820_fail
-    call2 print_str
+    call  print_str
 0:  jmp   0b
 
 e820_success:
@@ -86,7 +80,7 @@ e820_success:
 	rep   movsd                     # store vga 8x16 font bitmap at 0x6000
 	pop   ds
 
-    call2 vesa
+    call  vesa
 
     lgdt  [gdt32_desc]
     mov   eax,   cr0
@@ -197,10 +191,10 @@ do_e820:
 	jne   short .e820lp
 .e820f:
 	clc			                       # there is "jc" on end of list to this point, so the carry must be cleared
-	ret2                               # returns the number of entries in bp
+	ret                                # returns the number of entries in bp
 .failed:
 	stc			                       # "function unsupported" error exit
-    ret2
+    ret 
 
 
 debugging: .asciz "here! Ldfajsldfkajsdlfkjasdflakjsdflka"

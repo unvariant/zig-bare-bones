@@ -25,7 +25,9 @@ _mbr_relocate:
     mov   cx,   256
     rep   movsw
 
-    jmp   _mbr_start
+    .att_syntax prefix
+    jmp  $0, $_mbr_start
+    .intel_syntax noprefix
 
 _mbr_start:
     mov   byte ptr [boot_media], dl
