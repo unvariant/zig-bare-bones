@@ -54,12 +54,13 @@ fn bootdisk(boot: *Step) !*Step {
     disk_format.stdio = .{
         .check = ArrayList(Step.Run.StdIo.Check).init(b.allocator),
     };
+    disk_format.has_side_effects = true;
     const configure_mtools = b.addSystemCommand(&.{
         "sh", "-c", "cp mtools.conf ~/.mtoolsrc",
     });
     const disk_fat32 = b.addSystemCommand(&.{ "mformat", "-F", "-B", "zig-out/load/bootsector.bin", "C:" });
     const make_boot = b.addSystemCommand(&.{
-        "mmd", "BOOT",
+        "mmd", "C:BOOT",
     });
     const copy_loader = b.addSystemCommand(&.{
         "mcopy", "zig-out/boot/loader.bin", "C:/BOOT/LOADER.BIN",
@@ -74,14 +75,13 @@ fn bootdisk(boot: *Step) !*Step {
         "dd", "if=zig-out/load/mbrsector.bin", "of=disk.img", "conv=notrunc", "bs=2", "count=1", "seek=510",
     });
 
-    disk_create.step.dependOn(boot);
-
     disk_format.step.dependOn(&disk_create.step);
 
     disk_fat32.step.dependOn(&configure_mtools.step);
     disk_fat32.step.dependOn(&disk_format.step);
     make_boot.step.dependOn(&disk_fat32.step);
     copy_loader.step.dependOn(&make_boot.step);
+    copy_loader.step.dependOn(boot);
     copy_switch.step.dependOn(&copy_loader.step);
 
     copy_mbr_body.step.dependOn(&copy_switch.step);
