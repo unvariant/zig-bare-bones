@@ -1,0 +1,6 @@
+services:
+  app:
+    build: .
+    platform: linux/amd64
+
+# TODO: expose display for qemu
