@@ -117,20 +117,18 @@ fn bootloader() !*Step {
         .path = "src/linker.ld",
     });
 
+    const argv = [_]OutputStep.Str{
+        OutputStep.Str{ .str = "objcopy" },
+    };
     const debug_info = OutputStep.create(b, .{
-        .argv = &.{ OutputStep.Str{
-            .str = "objcopy",
-        }, OutputStep.Str{
-            .str = "--only-keep-debug",
-        }, OutputStep.Str{
-            .source = final.getOutputSource(),
-        }, .output },
+        .argv = &argv,
         .output_name = "switch.debug",
     });
     const strip_final = b.addObjCopy(debug_info.getOutputSource(), .{
         .basename = "switch",
         .format = .bin,
     });
+    step.dependOn(&b.addInstallFile(debug_info.getOutputSource(), "boot/switch.debug").step);
     step.dependOn(&b.addInstallFile(strip_final.getOutputSource(), "boot/switch.bin").step);
 
     const symbols = b.addStaticLibrary(.{
@@ -447,7 +445,9 @@ const OutputStep = struct {
                         },
                     }
                 },
-                else => {},
+                .output => {
+                    display = owner.fmt("{s} [.output]", .{display});
+                },
             }
         }
 
@@ -461,12 +461,7 @@ const OutputStep = struct {
         for (options.argv) |str| {
             switch (str) {
                 .source => |s| {
-                    switch (s) {
-                        .generated => |f| {
-                            step.dependOn(f.step);
-                        },
-                        else => {},
-                    }
+                    s.addStepDependencies(&step);
                 },
                 else => {},
             }
@@ -474,16 +469,16 @@ const OutputStep = struct {
 
         self.* = Self{
             .step = step,
-            .argv = options.argv,
+            .argv = owner.allocator.dupe(Str, options.argv) catch @panic("OOM"),
             .output_name = options.output_name,
             .output_file = std.Build.GeneratedFile{
-                .step = &step,
+                .step = &self.step,
             },
         };
         return self;
     }
 
-    pub fn getOutputSource(self: *Self) FileSource {
+    pub fn getOutputSource(self: *const Self) FileSource {
         return .{
             .generated = &self.output_file,
         };
@@ -499,17 +494,17 @@ const OutputStep = struct {
         var man = builder.cache.obtain();
         defer man.deinit();
 
-        man.hash.add(@as(u32, 0xfadefade));
+        man.hash.add(@as(u32, 0xaaaaaaa1));
 
-        for (self.argv) |str| {
-            switch (str) {
-                .source => |f| {
-                    const path = f.getPath(builder);
-                    _ = try man.addFile(path, null);
-                },
-                else => {},
-            }
-        }
+        // for (self.argv) |str| {
+        //     switch (str) {
+        //         .source => |f| {
+        //             const path = f.getPath(builder);
+        //             _ = try man.addFile(path, null);
+        //         },
+        //         else => {},
+        //     }
+        // }
 
         _ = try step.cacheHit(&man);
 
