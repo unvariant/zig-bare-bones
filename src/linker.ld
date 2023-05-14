@@ -37,21 +37,54 @@ SECTIONS
 
     .rodata : ALIGN(4K) {
         KEEP(*(.rodata))
-        __debug_info_start = .;
+
+        __debug_info_lo = .;
         KEEP(*(.debug_info))
-        __debug_info_end = .;
-        __debug_abbrev_start = .;
+        __debug_info_hi = .;
+
+        __debug_abbrev_lo = .;
         KEEP(*(.debug_abbrev))
-        __debug_abbrev_end = .;
-        __debug_str_start = .;
+        __debug_abbrev_hi = .;
+
+        __debug_str_lo = .;
         KEEP(*(.debug_str))
-        __debug_str_end = .;
-        __debug_line_start = .;
+        __debug_str_hi = .;
+
+        __debug_str_offsets_lo = .;
+        KEEP(*(.debug_str_offsets))
+        __debug_str_offsets_hi = .;
+
+        __debug_line_lo = .;
         KEEP(*(.debug_line))
-        __debug_line_end = .;
-        __debug_ranges_start = .;
+        __debug_line_hi = .;
+
+        __debug_line_str_lo = .;
+        KEEP(*(.debug_line_str))
+        __debug_line_str_hi = .;
+
+        __debug_ranges_lo = .;
         KEEP(*(.debug_ranges))
-        __debug_ranges_end = .;
+        __debug_ranges_hi = .;
+
+        __debug_loclists_lo = .;
+        KEEP(*(.debug_loclists))
+        __debug_loclists_hi = .;
+
+        __debug_rnglists_lo = .;
+        KEEP(*(.debug_rnglists))
+        __debug_rnglists_hi = .;
+
+        __debug_addr_lo = .;
+        KEEP(*(.debug_addr))
+        __debug_addr_hi = .;
+
+        __debug_names_lo = .;
+        KEEP(*(.debug_names))
+        __debug_names_hi = .;
+
+        __debug_frame_lo = .;
+        KEEP(*(.debug_frame))
+        __debug_frame_hi = .;
     }
 
     .data : ALIGN(4K) {
@@ -62,4 +95,8 @@ SECTIONS
         *(COMMON)
         *(.bss)
     }
+
+    . = ALIGN(4K);
+    __end_of_bootloader = .;
+    __start_of_heap = .;
 }

@@ -4,6 +4,7 @@ const intrin = @import("x86_64.zig");
 const hang = @import("main.zig").hang;
 const pic = @import("pic.zig");
 const pio = @import("pio.zig");
+const alloc = @import("alloc.zig");
 
 pub const IDT_INTERRUPT = 0b1110;
 pub const IDT_TRAP = 0b1111;
@@ -22,7 +23,7 @@ pub const InterruptTableDescriptor = packed struct {
     offset: usize,
 };
 
-var interrupt_table: [256] Descriptor = undefined;
+var interrupt_table: [256]Descriptor = undefined;
 var interrupt_table_descriptor: InterruptTableDescriptor = undefined;
 
 pub fn set(n: usize, handler: *const fn () callconv(.C) void, gate_type: u8, privilege: u8, present: u8) void {
@@ -31,13 +32,13 @@ pub fn set(n: usize, handler: *const fn () callconv(.C) void, gate_type: u8, pri
     const hi = @intCast(u42, offset >> 16);
     const flags = (present << 7) | (privilege << 5) | gate_type;
 
-    interrupt_table[n] = Descriptor {
-    .offset_lo = lo,
-    .gdt_segment = 0x08,
-    .interrupt_stack_table_offset = 0x00,
-    .flags = flags,
-    .offset_hi = hi,
-    .reserved = 0,
+    interrupt_table[n] = Descriptor{
+        .offset_lo = lo,
+        .gdt_segment = 0x08,
+        .interrupt_stack_table_offset = 0x00,
+        .flags = flags,
+        .offset_hi = hi,
+        .reserved = 0,
     };
 }
 
@@ -577,8 +578,8 @@ const GeneralRegisters = packed struct {
     r12: usize,
     r11: usize,
     r10: usize,
-    r9:  usize,
-    r8:  usize,
+    r9: usize,
+    r8: usize,
     rdi: usize,
     rsi: usize,
     rbp: usize,
@@ -609,12 +610,10 @@ const Context = packed struct {
 };
 
 fn dump_context(context: *Context) callconv(.C) void {
-    term.set_color(
-        term.TermColor {
-            .fg = term.Color.BrightYellow,
-            .bg = term.Color.Black,
-        }
-    );
+    term.set_color(term.TermColor{
+        .fg = term.Color.BrightYellow,
+        .bg = term.Color.Black,
+    });
     term.printf(
         \\r15={X:0>16}h r14={X:0>16}h r13={X:0>16}h es={X:0>4}h 
         \\r12={X:0>16}h r11={X:0>16}h r10={X:0>16}h cs={X:0>4}h
@@ -625,21 +624,11 @@ fn dump_context(context: *Context) callconv(.C) void {
         \\gdt={X:0>16}h idt={X:0>16}h
         \\cr2={X:0>16}h
         \\eflags={X:0>16}h
-    ,
-    .{ context.general_registers.r15, context.general_registers.r14, context.general_registers.r13, context.segment_registers.es
-     , context.general_registers.r12, context.general_registers.r11, context.general_registers.r10, context.segment_registers.cs
-     , context.general_registers.r9,  context.general_registers.r8,  context.general_registers.rdi, context.segment_registers.ss
-     , context.general_registers.rsi, context.general_registers.rbp, context.general_registers.rsp, context.segment_registers.ds
-     , context.general_registers.rbx, context.general_registers.rdx, context.general_registers.rcx, context.segment_registers.fs
-     , context.general_registers.rax, context.ret_addr,                                             context.segment_registers.gs
-     , intrin.read_gdtr64().offset, intrin.read_idtr64().offset
-     , intrin.read_cr2()
-     , context.eflags
-     });
+    , .{ context.general_registers.r15, context.general_registers.r14, context.general_registers.r13, context.segment_registers.es, context.general_registers.r12, context.general_registers.r11, context.general_registers.r10, context.segment_registers.cs, context.general_registers.r9, context.general_registers.r8, context.general_registers.rdi, context.segment_registers.ss, context.general_registers.rsi, context.general_registers.rbp, context.general_registers.rsp, context.segment_registers.ds, context.general_registers.rbx, context.general_registers.rdx, context.general_registers.rcx, context.segment_registers.fs, context.general_registers.rax, context.ret_addr, context.segment_registers.gs, intrin.read_gdtr64().offset, intrin.read_idtr64().offset, intrin.read_cr2(), context.eflags });
 }
 
 export fn handle_interrupt(context: *Context) callconv(.C) void {
-    term.printf("interrupt: {X:0>2}h\nerror_code: {X}h\n", .{context.intn, context.error_code});
+    term.printf("interrupt: {X:0>2}h\nerror_code: {X}h\n", .{ context.intn, context.error_code });
     switch (context.intn) {
         pic.PRIMARY_PIC_VECTOR + 1 => {
             var key = pio.in8(0x60);
@@ -649,16 +638,19 @@ export fn handle_interrupt(context: *Context) callconv(.C) void {
     }
 
     switch (context.intn) {
-        pic.PRIMARY_PIC_VECTOR ... pic.PRIMARY_PIC_VECTOR + 15 => {
+        pic.PRIMARY_PIC_VECTOR...pic.PRIMARY_PIC_VECTOR + 15 => {
             pic.eoi(context.intn);
         },
         else => {},
     }
 
     switch (context.intn) {
-        0x06, 0x0E => {
+        0x06, 0x0D => {
             dump_context(context);
             hang();
+        },
+        0x0E => {
+            alloc.handle_page_fault(@truncate(u32, context.error_code));
         },
         else => {},
     }

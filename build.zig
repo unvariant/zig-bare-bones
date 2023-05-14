@@ -30,7 +30,8 @@ pub fn build(builder: *Builder) void {
     var disk = bootdisk(boot) catch |e| @panic(@errorName(e));
     var run = b.step("run", "run the os/bootloader/whatever the hell this is");
     // add "-d", "trace:ide_sector_read,trace:pic_interrupt,int,in_asm", for stupid amount of logging
-    var run_cmd = b.addSystemCommand(&.{ "qemu-system-x86_64", "-no-reboot", "-no-shutdown", "-vga", "virtio", "-D", "qemu.log", "-drive", "format=raw,file=disk.img,if=ide" });
+    // add "-singlestep" for logs of every instruction executed, will slow down emulation
+    var run_cmd = b.addSystemCommand(&.{ "qemu-system-x86_64", "-no-reboot", "-no-shutdown", "-vga", "virtio", "-D", "qemu.log", "-d", "in_asm", "-drive", "format=raw,file=disk.img,if=ide", "-singlestep" });
     run_cmd.step.dependOn(disk);
     run.dependOn(&run_cmd.step);
 }
@@ -79,50 +80,14 @@ fn bootdisk(boot: *Step) !*Step {
 
     disk_fat32.step.dependOn(&configure_mtools.step);
     disk_fat32.step.dependOn(&disk_format.step);
+    disk_fat32.step.dependOn(boot);
     make_boot.step.dependOn(&disk_fat32.step);
     copy_loader.step.dependOn(&make_boot.step);
-    copy_loader.step.dependOn(boot);
     copy_switch.step.dependOn(&copy_loader.step);
 
     copy_mbr_body.step.dependOn(&copy_switch.step);
     copy_mbr_signature.step.dependOn(&copy_mbr_body.step);
     step.dependOn(&copy_mbr_signature.step);
-
-    // switch (builtin.os.tag) {
-    //     .linux => {
-    //         // TODO: make sure this works
-    //         // const disk_create = b.addSystemCommand(&.{
-    //         //     "dd",    "if=/dev/zero", "of=disk.img",
-    //         //     "bs=1M", "count=32",
-    //         // });
-    //         // const disk_format = b.addSystemCommand(&.{
-    //         //     "fdisk",
-    //         //     "disk.img",
-    //         // });
-    //         // disk_format.stdin = "n\np\n1\n\n\nt\n0c\na\nw\n";
-    //         // disk_format.stdio = .{
-    //         //     .check = ArrayList(Step.Run.StdIo.Check).init(b.allocator),
-    //         // };
-    //         // const configure_mtools = b.addSystemCommand(&.{
-    //         //     "sh", "-c", "cp .mtoolsrc ~/.mtoolsrc",
-    //         // });
-    //         // const disk_fat32 = b.addSystemCommand(&.{
-    //         //     "mformat", "-F", "-B", "zig-out/load/bootsector.bin",
-    //         // });
-    //     },
-    //     .macos => {
-    //         const disk_fat32 = b.addSystemCommand(&.{ "hdiutil", "create", "-ov", "-size", "64m", "-volname", "ZIG_OS", "-fs", "FAT32", "-layout", "MBRSPUD", "-format", "UDRW", "-srcfolder", "zig-out/disk", "disk" });
-    //         const rename = b.addSystemCommand(&.{ "mv", "disk.dmg", "disk.img" });
-    //         const make_bootable = b.addSystemCommand(&.{
-    //             "python3", "create_bootable_partition.py", "disk.img", "disk.img", "zig-out/load/bootsector.bin",
-    //         });
-    //         disk_fat32.step.dependOn(boot);
-    //         rename.step.dependOn(&disk_fat32.step);
-    //         make_bootable.step.dependOn(&rename.step);
-    //         copy_mbr_body.step.dependOn(&make_bootable.step);
-    //     },
-    //     else => step.fail("unsupported host os: {s}\n", @tagName(builtin.os.tag)),
-    // }
 
     return step;
 }
@@ -136,7 +101,9 @@ fn bootloader() !*Step {
             .path = "src/main.zig",
         },
         .target = bootloader_target(),
+        .optimize = .Debug,
     });
+    final.disable_stack_probing = true;
 
     const final_files = try files("src/arch", .{});
     defer final_files.deinit();
@@ -149,7 +116,18 @@ fn bootloader() !*Step {
     final.setLinkerScriptPath(.{
         .path = "src/linker.ld",
     });
-    const strip_final = b.addObjCopy(final.getOutputSource(), .{
+
+    const debug_info = OutputStep.create(b, .{
+        .argv = &.{ OutputStep.Str{
+            .str = "objcopy",
+        }, OutputStep.Str{
+            .str = "--only-keep-debug",
+        }, OutputStep.Str{
+            .source = final.getOutputSource(),
+        }, .output },
+        .output_name = "switch.debug",
+    });
+    const strip_final = b.addObjCopy(debug_info.getOutputSource(), .{
         .basename = "switch",
         .format = .bin,
     });
@@ -158,7 +136,7 @@ fn bootloader() !*Step {
     const symbols = b.addStaticLibrary(.{
         .name = "symbols",
         .target = bootloader_target(),
-        .optimize = .ReleaseFast,
+        .optimize = .Debug,
     });
 
     const boot_files = try files("src/boot", .{
@@ -421,5 +399,145 @@ const AssemblyStep = struct {
                 full_dest_path, self.output_path, @errorName(err),
             });
         };
+    }
+};
+
+const OutputStep = struct {
+    const Tag = enum {
+        str,
+        source,
+        output,
+    };
+
+    const Str = union(Tag) {
+        str: []const u8,
+        source: FileSource,
+        output: void,
+    };
+
+    const Options = struct {
+        argv: []const Str,
+        output_name: []const u8,
+    };
+
+    step: Step,
+    argv: []const Str,
+    output_name: []const u8,
+    output_file: std.Build.GeneratedFile,
+
+    const Self = @This();
+    pub const base_id: Step.Id = .custom;
+
+    pub fn create(owner: *Builder, options: Options) *Self {
+        const self = owner.allocator.create(Self) catch @panic("OOM");
+
+        var display: []u8 = "";
+        for (options.argv) |str| {
+            switch (str) {
+                .str => |s| {
+                    display = owner.fmt("{s} {s}", .{ display, s });
+                },
+                .source => |s| {
+                    switch (s) {
+                        .path => |path| {
+                            display = owner.fmt("{s} {s}", .{ display, path });
+                        },
+                        .generated => |f| {
+                            display = owner.fmt("{s} [{s}]", .{ display, f.step.name });
+                        },
+                    }
+                },
+                else => {},
+            }
+        }
+
+        var step = Step.init(.{
+            .id = base_id,
+            .name = owner.fmt("run {s}", .{display}),
+            .owner = owner,
+            .makeFn = make,
+        });
+
+        for (options.argv) |str| {
+            switch (str) {
+                .source => |s| {
+                    switch (s) {
+                        .generated => |f| {
+                            step.dependOn(f.step);
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
+        }
+
+        self.* = Self{
+            .step = step,
+            .argv = options.argv,
+            .output_name = options.output_name,
+            .output_file = std.Build.GeneratedFile{
+                .step = &step,
+            },
+        };
+        return self;
+    }
+
+    pub fn getOutputSource(self: *Self) FileSource {
+        return .{
+            .generated = &self.output_file,
+        };
+    }
+
+    fn make(step: *Step, progress: *std.Progress.Node) !void {
+        _ = progress;
+
+        const builder = step.owner;
+        const arena = builder.allocator;
+        const self = @fieldParentPtr(Self, "step", step);
+
+        var man = builder.cache.obtain();
+        defer man.deinit();
+
+        man.hash.add(@as(u32, 0xfadefade));
+
+        for (self.argv) |str| {
+            switch (str) {
+                .source => |f| {
+                    const path = f.getPath(builder);
+                    _ = try man.addFile(path, null);
+                },
+                else => {},
+            }
+        }
+
+        _ = try step.cacheHit(&man);
+
+        const digest = man.final();
+        const full_dest_path = builder.cache_root.join(builder.allocator, &.{
+            "o", &digest, self.output_name,
+        }) catch unreachable;
+        const cache_path = "o" ++ fs.path.sep_str ++ &digest;
+        builder.cache_root.handle.makePath(cache_path) catch |err| {
+            return step.fail("unable to make path {s}: {s}", .{ cache_path, @errorName(err) });
+        };
+        self.output_file.path = full_dest_path;
+
+        var argv = ArrayList([]const u8).init(arena);
+        for (self.argv) |str| {
+            switch (str) {
+                .str => |s| {
+                    try argv.append(s);
+                },
+                .source => |s| {
+                    try argv.append(s.getPath(builder));
+                },
+                .output => {
+                    try argv.append(full_dest_path);
+                },
+            }
+        }
+
+        try Step.evalChildProcess(step, argv.items);
     }
 };

@@ -86,7 +86,7 @@ pub fn init() void {
     }
 }
 
-pub fn line_start () void {
+pub fn line_start() void {
     var cols = @intCast(i16, column);
     while (cols >= 0) {
         put_char_at(' ', line, @intCast(u16, cols));

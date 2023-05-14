@@ -44,6 +44,8 @@ _loader_start:
     call  read_file
     jc    rferror
 
+0:  jmp   0b
+
     .att_syntax prefix
     jmp   $0, $0x8000
     .intel_syntax noprefix

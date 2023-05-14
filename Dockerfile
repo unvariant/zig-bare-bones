@@ -34,6 +34,6 @@ RUN apt-get update && apt-get -y install \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-COPY --from=build /chall/disk.img .
+COPY --from=build /app/disk.img .
 
 RUN qemu-system-x86_64 -no-reboot -no-shutdown -vga virtio -D qemu.log -drive format=raw,file=/app/disk.img,if=ide

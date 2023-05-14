@@ -61,7 +61,7 @@ var framebuffer: [*]volatile u32 = undefined;
 var font_map: *[4096]u8 = undefined;
 var color: TermColor = default_color;
 
-const writer = Writer(void, error{}, writeFn){ .context = {} };
+pub const writer = Writer(void, error{}, writeFn){ .context = {} };
 
 fn writeFn(_: void, string: []const u8) error{}!usize {
     write(string);

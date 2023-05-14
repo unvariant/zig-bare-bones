@@ -1,9 +1,11 @@
+pub const PAGE_SIZE = 0x1000;
+
 pub const Gdtr64 = packed struct {
     size: u16,
     offset: u64,
 };
 
-pub fn read_gdtr64 () Gdtr64 {
+pub fn read_gdtr64() Gdtr64 {
     var gdtr: Gdtr64 = undefined;
     asm volatile (
         \\.intel_syntax noprefix
@@ -20,7 +22,7 @@ pub const Idtr64 = packed struct {
     offset: u64,
 };
 
-pub fn read_idtr64 () Idtr64 {
+pub fn read_idtr64() Idtr64 {
     var idtr: Idtr64 = undefined;
     asm volatile (
         \\.intel_syntax noprefix
@@ -32,7 +34,7 @@ pub fn read_idtr64 () Idtr64 {
     return idtr;
 }
 
-pub fn read_cr2 () u64 {
+pub fn read_cr2() u64 {
     var cr2: u64 = undefined;
     asm volatile (
         \\.intel_syntax noprefix
@@ -48,7 +50,7 @@ pub const Cr3 = packed struct {
     pml4: u52,
 };
 
-pub fn read_cr3 () Cr3 {
+pub fn read_cr3() Cr3 {
     var cr3: u64 = undefined;
     asm volatile (
         \\.intel_syntax noprefix
