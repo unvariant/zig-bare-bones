@@ -16,6 +16,8 @@ _entry:
     mov   gs,    ax
     mov   sp,    0x7C00
 
+    push  edx
+
     mov   di,   offset _entry_base
     mov   si,   0x7C00
     mov   cx,   256
@@ -24,5 +26,5 @@ _entry:
     mov   ax,   0x02
     int   0x10
 
-    push  edx
-    call  _zig_entry
+    mov   eax,  offset _zig_entry
+    call  eax

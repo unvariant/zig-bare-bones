@@ -13,6 +13,9 @@ SECTIONS
 
     . = 0x600 + 446;
     __partition_table = .;
+    .table : {
+        . = 0x600 + 446 + 16 * 4;
+    }
 
     . = 0x600 + 510;
     .magic : { SHORT(0xAA55) }

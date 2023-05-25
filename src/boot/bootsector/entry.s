@@ -15,8 +15,12 @@ _entry:
     mov   gs,    ax
     mov   sp,    0x7C00
 
-    push  edx
-    push  edi
     push  ecx
+    push  edi
+    push  edx
 
     call  _zig_entry
+
+    .section .stub, "awx"
+_stub:
+    jmp   _entry

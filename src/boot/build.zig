@@ -2,23 +2,38 @@ const std = @import("std");
 const builtin = std.builtin;
 const fs = std.fs;
 const mem = std.mem;
+const feature = std.Target.x86.Feature;
 
 const CrossTarget = std.zig.CrossTarget;
 const AssemblyStep = @import("steps/Assembler.zig");
+const ExtendedStep = @import("steps/ExtendedBootloader.zig");
 const ArrayList = std.ArrayList;
 const Build = std.Build;
 const Step = Build.Step;
 const CompileStep = Build.CompileStep;
+const FeatureSet = std.Target.Cpu.Feature.Set;
 
 pub fn build(b: *Build) void {
     buildErr(b) catch |err| @panic(@errorName(err));
 }
 
 fn buildErr(b: *Build) !void {
+    var add = FeatureSet.empty;
+    var sub = FeatureSet.empty;
+    add.addFeature(@enumToInt(feature.@"16bit_mode"));
+    add.addFeature(@enumToInt(feature.soft_float));
+    sub.addFeature(@enumToInt(feature.mmx));
+    sub.addFeature(@enumToInt(feature.sse));
+    sub.addFeature(@enumToInt(feature.sse2));
+    sub.addFeature(@enumToInt(feature.avx));
+    sub.addFeature(@enumToInt(feature.avx2));
+
     const target16 = .{
         .cpu_arch = .x86,
         .os_tag = .freestanding,
         .abi = .code16,
+        .cpu_features_add = add,
+        .cpu_features_sub = sub,
     };
 
     try buildBootModule(b, .{
@@ -37,12 +52,84 @@ fn buildErr(b: *Build) !void {
         .name = "extended",
         .path = "extended",
         .target = target16,
-        .optimize = .Debug,
+        .optimize = .ReleaseSmall,
     });
 
     _ = try buildCode16(b);
     _ = try buildCode32(b);
     _ = try buildCode64(b);
+
+    try buildBootstrap(b, .{
+        .mbrsector = &.{
+            "boot",
+            "mbrsector.bin",
+        },
+        .bootsector = &.{
+            "boot",
+            "bootsector.bin",
+        },
+        .extended = &.{
+            "boot",
+            "extended.bin",
+        },
+    });
+}
+
+fn buildBootstrap(b: *Build, options: struct {
+    mbrsector: []const []const u8,
+    bootsector: []const []const u8,
+    extended: []const []const u8,
+}) !void {
+    const arena = b.allocator;
+    //// negligible memory leak here
+    const mbrsector = b.getInstallPath(.prefix, try fs.path.join(arena, options.mbrsector));
+    const bootsector = b.getInstallPath(.prefix, try fs.path.join(arena, options.bootsector));
+    const extended = b.getInstallPath(.prefix, try fs.path.join(arena, options.extended));
+
+    const create_disk = b.addSystemCommand(&.{
+        "dd", "if=/dev/zero", "of=disk.img", "bs=1M", "count=64",
+    });
+    const create_partition_table = b.addSystemCommand(&.{
+        "mpartition", "-I", "-B", mbrsector, "A:",
+    });
+    const create_partition = b.addSystemCommand(&.{
+        "mpartition", "-c", "-a", "A:",
+    });
+    const format_partition = b.addSystemCommand(&.{
+        "mformat", "-F", "-R", "64", "-B", bootsector, "A:",
+    });
+    const add_extended_bootloader = ExtendedStep.create(b, .{
+        .disk_image = .{
+            .path = "disk.img",
+        },
+        .extended_bootloader = .{
+            .path = extended,
+        },
+    });
+    const add_file = b.addSystemCommand(&.{ "mcopy", "../../README.md", "A:" });
+
+    const emulate = b.addSystemCommand(&.{
+        "qemu-system-x86_64",
+        "-drive",
+        "format=raw,file=disk.img,if=ide",
+        "-D",
+        "qemu.log",
+        "-singlestep",
+        "-d",
+        "in_asm,trace:ide_sector_read",
+    });
+
+    const step = b.step("bootstrap", "build bootstrap disk for testing");
+    create_partition_table.step.dependOn(&create_disk.step);
+    create_partition_table.step.dependOn(b.getInstallStep());
+    create_partition.step.dependOn(&create_partition_table.step);
+    format_partition.step.dependOn(&create_partition.step);
+    add_extended_bootloader.step.dependOn(&format_partition.step);
+
+    add_file.step.dependOn(&add_extended_bootloader.step);
+
+    emulate.step.dependOn(&add_file.step);
+    step.dependOn(&emulate.step);
 }
 
 const BuildOptions = struct {
@@ -114,95 +201,13 @@ fn buildModule(b: *Build, options: BuildOptions) !*CompileStep {
         }
     }
 
+    elf.install();
+
     return elf;
 }
 
 fn isExtention(path: []const u8, extension: []const u8) bool {
     return mem.eql(u8, extension, fs.path.extension(path));
-}
-
-fn buildMbrsector(b: *Build) !void {
-    const target = CrossTarget{
-        .cpu_arch = .x86,
-        .os_tag = .freestanding,
-        .abi = .code16,
-    };
-    const optimize = .ReleaseSmall;
-
-    const elf = b.addExecutable(.{
-        .name = "mbrsector",
-        .root_source_file = .{
-            .path = "mbrsector/main.zig",
-        },
-        .target = target,
-        .optimize = optimize,
-    });
-    elf.omit_frame_pointer = true;
-    elf.setLinkerScriptPath(.{
-        .path = "mbrsector/linker.ld",
-    });
-    elf.addAssemblyFile("mbrsector/entry.s");
-    elf.addAnonymousModule("partitions", .{
-        .source_file = .{
-            .path = "common/partitions.zig",
-        },
-    });
-    elf.addAnonymousModule("packet", .{
-        .source_file = .{
-            .path = "common/packet.zig",
-        },
-    });
-
-    const bin = b.addObjCopy(elf.getOutputSource(), .{
-        .basename = "mbrsector",
-        .format = .bin,
-    });
-
-    b.getInstallStep().dependOn(&b.addInstallFile(bin.getOutputSource(), "boot/mbrsector.bin").step);
-}
-
-fn buildBootsector(b: *Build) !void {
-    const target = CrossTarget{
-        .cpu_arch = .x86,
-        .os_tag = .freestanding,
-        .abi = .code16,
-    };
-    const optimize = .ReleaseSmall;
-
-    const elf = b.addExecutable(.{
-        .name = "bootsector",
-        .root_source_file = .{
-            .path = "bootsector/main.zig",
-        },
-        .target = target,
-        .optimize = optimize,
-    });
-    elf.omit_frame_pointer = true;
-    elf.setLinkerScriptPath(.{
-        .path = "bootsector/linker.ld",
-    });
-    elf.addAssemblyFile("bootsector/entry.s");
-    elf.addAnonymousModule("partitions", .{
-        .source_file = .{
-            .path = "common/partitions.zig",
-        },
-    });
-    elf.addAnonymousModule("packet", .{
-        .source_file = .{
-            .path = "common/packet.zig",
-        },
-    });
-
-    const bin = b.addObjCopy(elf.getOutputSource(), .{
-        .basename = "bootsector",
-        .format = .bin,
-    });
-
-    b.getInstallStep().dependOn(&b.addInstallFile(bin.getOutputSource(), "boot/bootsector.bin").step);
-}
-
-fn buildExtended(b: *Build) !void {
-    _ = b;
 }
 
 fn buildCode16(b: *Build) !*CompileStep {

@@ -8,15 +8,17 @@ export fn _zig_entry(drive: u8) callconv(.C) noreturn {
 
     const addr = @truncate(u16, @ptrToInt(&__partition_table));
     const parts = Partitions.from(addr);
-    for (parts, 0..) |*partition, idx| {
-        if (!partition.is_bootable()) continue;
+    for (parts, 0..) |partition, idx| {
+        if (!partition.is_bootable()) {
+            continue;
+        }
 
         if (Packet.new(.{
             .drive = drive,
             .sector_count = 1,
             .offset = 0x7C00,
             .segment = 0,
-            .lba = 55,
+            .lba = partition.start_lba,
         }).load()) {
             print("[+] switching to bootsector\r\n");
             asm volatile (
@@ -50,7 +52,7 @@ fn putchar(ch: u8) void {
         \\xor %bx,   %bx
         \\int $0x10
         :
-        : [info] "{al}" (0x0E00 | @as(u16, ch)),
-        : "bx"
+        : [info] "{ax}" (0x0E00 | @as(u16, ch)),
+        : "bx", "ax"
     );
 }

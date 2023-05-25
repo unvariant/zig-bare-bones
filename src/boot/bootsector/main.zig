@@ -46,6 +46,8 @@ export fn _zig_entry(drive: u8, partition: *Partition, idx: u8) noreturn {
         }
     }
 
+    print("[+] switching to extended bootloader\r\n");
+
     const extended = @intToPtr(*const fn (u8, *Partition, u8) callconv(.C) noreturn, 0x7E00);
     extended(drive, partition, idx);
 }
@@ -70,7 +72,7 @@ fn putchar(ch: u8) void {
         //// is slightly shorter than
         //// mov $imm, %ah
         //// mov $imm, %al
-        : [info] "{al}" (0x0E00 | @as(u16, ch)),
+        : [info] "{ax}" (0x0E00 | @as(u16, ch)),
         : "bx"
     );
 }

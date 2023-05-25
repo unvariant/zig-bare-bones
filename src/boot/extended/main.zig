@@ -1,37 +1,22 @@
-const fs = @import("fs.zig");
+const std = @import("std");
+//const filesystem = @import("fs.zig");
+const term = @import("term.zig");
 
 const Partitions = @import("partitions");
 const Partition = Partitions.Partition;
 
-pub fn _extended_entry(drive: u8, partition: *Partition, idx: u8) linksection(".entry") callconv(.C) noreturn {
-    _ = drive;
-    _ = partition;
-    _ = idx;
+export fn _extended_entry(drive: u8, partition: *Partition, idx: u8) linksection(".entry") callconv(.C) noreturn {
+    term.print("[+] enter extended bootloader\r\n", .{});
 
-    fail("[+] enter extended bootsector\r\n");
+    term.print("[+] boot args:\r\n- drive: 0x{X:0>2}\r\n- partition: {any}\r\n- index: {}\r\n", .{ drive, partition, idx });
+    term.print("__heap: {X}\r\n", .{@ptrToInt(&__heap)});
+
+    //var fs = filesystem.from(drive, partition, @intToPtr(*filesystem.Parameters, 0x7C00));
+    //term.print("[+] boot fs: {any}\r\n", .{fs.kind()});
+
+    @panic("failed extended bootloader\r\n");
 }
 
-fn fail(static: []const u8) noreturn {
-    print(static);
-    while (true) {}
-}
-
-fn print(static: []const u8) void {
-    for (static) |ch| {
-        putchar(ch);
-    }
-}
-
-fn putchar(ch: u8) void {
-    asm volatile (
-        \\xor %bx,   %bx
-        \\int $0x10
-        :
-        //// mov $imm, %ax
-        //// is slightly shorter than
-        //// mov $imm, %ah
-        //// mov $imm, %al
-        : [info] "{al}" (0x0E00 | @as(u16, ch)),
-        : "bx"
-    );
+pub fn panic(static: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
+    term.fail("[-] PANIC: {s}", .{static});
 }
