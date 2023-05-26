@@ -9,7 +9,8 @@ zig-out/
 
 # random files
 bin/
-*zig/
+**/*zig/
+**/*zig
 lang/
 bootloader/
 
