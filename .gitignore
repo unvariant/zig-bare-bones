@@ -6,8 +6,12 @@ zig-debug/
 # zig auto created directories
 zig-cache/
 zig-out/
+
+# random files
 bin/
-zig/
+**/*zig/
+lang/
+bootloader/
 
 # files routinely created while debugging
 **/*.readelf
@@ -17,6 +21,7 @@ zig/
 **/*.o
 **/*.elf
 **/*.a
+**/*.out
 
 # disk image files
 **/*.dmg

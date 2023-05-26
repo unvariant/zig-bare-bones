@@ -17,13 +17,13 @@ pub const Region = packed struct {
 };
 
 extern const __e820_memory_map: usize;
-extern const e820_memory_map_len: usize;
+extern const __e820_memory_map_len: usize;
 
 var len: usize = undefined;
 pub var regions: []Region = undefined;
 
 pub fn init() void {
-    len = e820_memory_map_len;
+    len = __e820_memory_map_len;
     regions = @ptrCast([*]Region, &__e820_memory_map)[0..len];
 }
 

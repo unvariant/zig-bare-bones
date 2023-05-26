@@ -20,7 +20,6 @@ pub fn build(b: *Build) void {
 fn buildErr(b: *Build) !void {
     var add = FeatureSet.empty;
     var sub = FeatureSet.empty;
-    add.addFeature(@enumToInt(feature.@"16bit_mode"));
     add.addFeature(@enumToInt(feature.soft_float));
     sub.addFeature(@enumToInt(feature.mmx));
     sub.addFeature(@enumToInt(feature.sse));
@@ -32,6 +31,14 @@ fn buildErr(b: *Build) !void {
         .cpu_arch = .x86,
         .os_tag = .freestanding,
         .abi = .code16,
+        .cpu_features_add = add,
+        .cpu_features_sub = sub,
+    };
+
+    const target64 = .{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
         .cpu_features_add = add,
         .cpu_features_sub = sub,
     };
@@ -55,9 +62,9 @@ fn buildErr(b: *Build) !void {
         .optimize = .ReleaseSmall,
     });
 
-    _ = try buildCode16(b);
-    _ = try buildCode32(b);
-    _ = try buildCode64(b);
+    // _ = try buildCode16(b);
+    // _ = try buildCode32(b);
+    // _ = try buildCode64(b);
 
     try buildBootstrap(b, .{
         .mbrsector = &.{
@@ -73,6 +80,24 @@ fn buildErr(b: *Build) !void {
             "extended.bin",
         },
     });
+
+    const primary = b.addExecutable(.{
+        .name = "primary",
+        .root_source_file = .{
+            .path = "primary/main.zig",
+        },
+        .target = target64,
+        .optimize = .ReleaseSmall,
+    });
+    primary.addAssemblyFile("primary/32bit/code32.s");
+    primary.addAssemblyFile("primary/64bit/code64.s");
+    primary.addAssemblyFile("primary/64bit/interrupt.s");
+    primary.setLinkerScriptPath(.{
+        .path = "primary/linker.ld",
+    });
+    primary.install();
+
+    installAt(b, flatBinary(b, primary), "boot/next.bin");
 }
 
 fn buildBootstrap(b: *Build, options: struct {
@@ -106,10 +131,12 @@ fn buildBootstrap(b: *Build, options: struct {
             .path = extended,
         },
     });
-    const add_file = b.addSystemCommand(&.{ "mcopy", "../../README.md", "A:" });
+    const add_file = b.addSystemCommand(&.{ "mcopy", "zig-out/boot/next.bin", "A:" });
 
     const emulate = b.addSystemCommand(&.{
         "qemu-system-x86_64",
+        "-no-reboot",
+        "-no-shutdown",
         "-drive",
         "format=raw,file=disk.img,if=ide",
         "-D",

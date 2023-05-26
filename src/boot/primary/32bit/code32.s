@@ -4,7 +4,7 @@
     .code32
 
 
-    .extern gdt32_offset_data
+    //.extern gdt32_offset_data
     .extern __page_table_memory_start
 
 
@@ -16,7 +16,8 @@
 
 
 _code_32:
-    mov   ax,    offset gdt32_offset_data
+    //mov   ax,    offset gdt32_offset_data
+    mov   ax,    0x10
     mov   ds,    ax
     mov   es,    ax
     mov   fs,    ax

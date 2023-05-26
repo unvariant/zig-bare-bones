@@ -15,25 +15,21 @@
 
     .extern print_str
     .extern print_hex
-
-
-.macro ret2 arg
-    .att_syntax prefix
-    retw \arg
-    .intel_syntax noprefix
-.endm
-
-.macro call2 arg
-    .att_syntax prefix
-    callw \arg
-    .intel_syntax noprefix
-.endm
+    .extern __vesa_width
+    .extern __vesa_height
+    .extern __vesa_pitch
+    .extern __vesa_framebuffer
 
 
 vesa:
     push  es
     push  ds
     pushad
+
+    xor   si,    si
+    mov   ds,    si
+    mov   si,    offset vesa$init_str
+    call  print_str
 
     mov   ax,    0x4F00
     mov   di,    offset vbe_info
@@ -85,9 +81,19 @@ vesa$iterate:
     mov   di,    0
     call  vesa$call
 
+    mov   ax,    word ptr  [vesa_width]
+    mov   dx,    word ptr  [vesa_height]
+    mov   bx,    word ptr  [vesa_pitch]
+    mov   ecx,   dword ptr [vesa_framebuffer]
+
+    mov   word ptr  [__vesa_width], ax
+    mov   word ptr  [__vesa_height], dx
+    mov   word ptr  [__vesa_pitch], bx
+    mov   dword ptr [__vesa_framebuffer], ecx
+
     xor   si,    si
     mov   ds,    si
-    mov   si,    offset vesa$init_str
+    mov   si,    offset vesa$fini_str
     call  print_str
 
     popad
@@ -120,6 +126,7 @@ vesa$print_str:
 
 
 vesa$init_str: .asciz "beginning vesa scan"
+vesa$fini_str: .asciz "finished vesa scan"
 vesa$error_str: .asciz "vesa error occurred"
 vesa$mode_found: .asciz "vesa mode found"
 

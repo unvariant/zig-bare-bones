@@ -3,51 +3,23 @@
 	.code16
 
     .global _code_16
-    .global print_hex
-    .global print_str
+
     .global e820_memory_map_len
     .global gdt32_desc
     .global gdt32_offset_code
     .global gdt32_offset_data
-
-    .extern _code_32
+    .global print_str
+    .global print_hex
 
     .equ TERMINAL_COLOR, 0x0F
     .equ VIDEO_PAGE,     0x00
 
-.macro ret2 arg
-    .att_syntax prefix
-    retw \arg
-    .intel_syntax noprefix
-.endm
-
-.macro call2 arg
-    .att_syntax prefix
-    callw \arg
-    .intel_syntax noprefix
-.endm
-
 
 _code_16:
-    cli
     cld
-    xor   ax,    ax             # zero all the registers
-    mov   ds,    ax
-    mov   es,    ax
-    mov   ss,    ax
-    mov   fs,    ax
-    mov   gs,    ax
 
-    mov   sp,    0x7C00         # set stack top to the start of the bootloader, stack grows down
-
-check_A20:                 # fast A20 enable, may not work on all chipsets
-    in    al,    0x92
-    test  al,    0b00000010
-    jnz   A20_set
-    or    al,    0b00000010
-    and   al,    0b11111110
-    out   0x92,  al
-A20_set:
+    mov   si,    offset enter_bootstrap
+    call  print_str
 
     mov   di,    offset __e820_memory_map
     call  do_e820
@@ -80,6 +52,8 @@ e820_success:
 	rep   movsd                     # store vga 8x16 font bitmap at 0x6000
 	pop   ds
 
+0:  jmp   0b
+
     call  vesa
 
     lgdt  [gdt32_desc]
@@ -87,65 +61,60 @@ e820_success:
     or    al,    1
     mov   cr0,   eax
 
-    push  offset gdt32_offset_code
-    mov   eax,   offset _code_32
-    push  eax
-    retf
+    .att_syntax prefix
+    jmpl $0x08, $0x100000
+    .intel_syntax noprefix
+
+    // push  offset gdt32_offset_code
+    // mov   eax,   offset _code_32
+    // push  eax
+    // retf
 
 
 print_str:
     pushad
-    lodsb
-    test  al,    al
-    jz    0f
-    mov   bx,    0x000F
-    mov   ah,    0x0E
+    mov    ah,    0x0e                        # ah=0x0E, int 0x10, print character and move cursor
+    mov    bx,    0 << 8 | 0x0F
 1:
-    int   0x10
     lodsb
-    test  al,    al
-    jnz   1b
-0:
-    mov   al,    '\r'
-    int   0x10
-    mov   al,    '\n'
-    int   0x10
+    int    0x10
+    cmp    byte ptr [si], 0
+    jne    1b
     popad
     ret
 
 
 print_hex:
     pushad
-    mov   bp,    sp
+    mov    bp,    sp
 
-    test  cx,    cx
-    jz    0f
+    push   0
+
 1:
     lodsb
-    mov   ah,    al
-    shr   ah,    4
-    and   al,    0x0F
-    call  hex
-    xchg  ah,    al
-    call  hex
-    push  ax
-    dec   cx
-    jnz   1b
-0:
-    mov   si,    sp
-    call  print_str
+    mov    ah,    al
+    shr    ah,    4
+    and    al,    0x0F
+    call   hex
+    xchg   al,    ah
+    call   hex
+    push   ax
+    loop   1b
 
-    mov   sp,    bp
+    mov    si,    sp
+    call   print_str
+
+    mov    sp,    bp
     popad
     ret
 
 
 hex:
-    add   al,    '0'
-    cmp   al,    '9'
-    jle   1f
-    add   al,     'A' - '0' - 10
-1:
+    add    al,    0x30
+    cmp    al,    0x39
+    jle    0f
+    add    al,    'A' - 0x30 - 0x0A
+0:
     ret
 
 
@@ -197,6 +166,7 @@ do_e820:
     ret 
 
 
+enter_bootstrap: .asciz "[+] enter bootstrap stage\r\n"
 debugging: .asciz "here! Ldfajsldfkajsdlfkjasdflakjsdflka"
 
 e820_memory_map_len: .8byte 0

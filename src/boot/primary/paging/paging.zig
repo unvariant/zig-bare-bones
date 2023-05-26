@@ -10,7 +10,7 @@ pub fn get_frame() anyerror![]u8 {
     const page_table_memory_end = @ptrToInt(&__page_table_memory_end);
     if (page_table_unused != page_table_memory_end) {
         const frame = @intToPtr([*]u8, page_table_unused)[0..0x1000];
-        @memset(frame, 0);
+        mem.set(u8, frame, 0);
         page_table_unused += 0x1000;
         return frame;
     } else {
