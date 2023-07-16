@@ -1,15 +1,12 @@
 const term = @import("term.zig");
 
-extern const __heap: usize;
+const Disk = @This();
 
-var drive: u8 = undefined;
-var parameters = Parameters{
-    .size = 0x1A,
-};
+drive: u8,
+parameters: Parameters,
 
-pub fn init(drive_number: u8) void {
+pub fn new(drive: u8) Disk {
     term.print("[+] init disk\r\n", .{});
-    drive = drive_number;
     if (asm volatile (
         \\mov  $0x41, %ah
         \\mov  $0x55AA, %bx
@@ -22,15 +19,17 @@ pub fn init(drive_number: u8) void {
         @panic("int 13h extensions not supported");
     }
 
+    term.print("[+] loading parameters\r\n", .{});
+    var parameters = Parameters.new(0x1A);
     parameters.load(drive);
 
-    if (parameters.bytes_per_sector != 512) {
-        term.print("bytes per sector: {}\r\n", .{parameters.bytes_per_sector});
-        @panic("invalid bytes per sector");
-    }
+    return .{
+        .drive = drive,
+        .parameters = parameters,
+    };
 }
 
-pub fn load(options: struct {
+pub fn load(self: *Disk, options: struct {
     sector_count: u16,
     buffer: [*]u8,
     sector: u32,
@@ -50,9 +49,9 @@ pub fn load(options: struct {
         packet.sector_count = sectors;
         leftover -= sectors;
 
-        internal_load(&packet);
+        self.internal_load(&packet);
 
-        const overflow = @addWithOverflow(packet.offset, sectors * parameters.bytes_per_sector);
+        const overflow = @addWithOverflow(packet.offset, sectors * self.parameters.bytes_per_sector);
         packet.offset = overflow[0];
         if (overflow[1] == 1) {
             packet.segment += 1;
@@ -60,7 +59,7 @@ pub fn load(options: struct {
     }
 }
 
-fn internal_load(packet: *Packet) void {
+fn internal_load(self: *const Disk, packet: *Packet) void {
     var success = true;
     var error_code: u8 = 0;
     asm volatile (
@@ -70,7 +69,7 @@ fn internal_load(packet: *Packet) void {
         : [success] "={al}" (success),
           [err] "={ah}" (error_code),
         : [packet] "{si}" (packet),
-          [drive] "{dl}" (drive),
+          [drive] "{dl}" (self.drive),
         : "ah"
     );
     check(success, error_code);
@@ -107,7 +106,13 @@ const Parameters = packed struct {
 
     const Self = @This();
 
-    fn load(self: *Self, drive_number: u8) void {
+    fn new(size: u16) Self {
+        return .{
+            .size = size,
+        };
+    }
+
+    fn load(self: *Self, drive: u8) void {
         var error_code: u8 = undefined;
         var success = asm volatile (
             \\mov   $0x48, %ah
@@ -116,7 +121,7 @@ const Parameters = packed struct {
             : [success] "={al}" (-> bool),
               [failure] "={ah}" (error_code),
             : [buffer] "{si}" (self),
-              [drive] "{dl}" (drive_number),
+              [drive] "{dl}" (drive),
         );
         check(success, error_code);
     }

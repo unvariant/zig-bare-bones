@@ -1,51 +1,31 @@
 const std = @import("std");
-const fs = @import("fs.zig");
+const Fs = @import("fs.zig");
 const term = @import("term.zig");
-const disk = @import("disk.zig");
+const Disk = @import("disk.zig");
 
-const Partitions = @import("partitions");
-const Partition = Partitions.Partition;
+const RawPartition = @import("partitions").Partition;
+const Partition = @import("partition.zig");
 
-export fn _extended_entry(drive: u8, partition: *Partition, idx: u8) linksection(".entry") callconv(.C) noreturn {
-    main(drive, partition, idx) catch |err| @panic(@errorName(err));
+export fn _extended_entry(drive: u8, raw_partition: *RawPartition, idx: u8) linksection(".entry") callconv(.C) noreturn {
+    main(drive, raw_partition, idx) catch |err| @panic(@errorName(err));
 
     @panic("failed to load next stages");
 }
 
-fn main(drive: u8, partition: *Partition, idx: u8) !void {
+fn main(drive: u8, raw_partition: *RawPartition, idx: u8) !void {
     enable_a20();
     enable_unreal_mode();
 
     term.print("[+] enter extended bootloader\r\n", .{});
 
-    term.print("[+] boot args:\r\n- drive: 0x{X:0>2}\r\n- partition: {any}\r\n- index: {}\r\n", .{ drive, partition, idx });
+    term.print("[+] boot args:\r\n- drive: 0x{X:0>2}\r\n- partition: {any}\r\n- index: {}\r\n", .{ drive, raw_partition, idx });
 
-    fs.init(drive, partition, 0x7C00);
-    var boot = try fs.open(fs.root(), "NEXT.BIN");
+    var disk = Disk.new(drive);
+    var partition = Partition.from(&disk, raw_partition);
+    var fs = Fs.from(&partition, 0x7C00);
 
-    var offset: u32 = 0;
-    var scratch = [_]u8{0} ** 512;
-    var cluster = boot.cluster();
-    while (offset < boot.size) {
-        var sector = cluster.sector() + partition.start_lba;
-
-        disk.load(.{
-            .sector_count = 1,
-            .buffer = @ptrCast([*]u8, &scratch),
-            .sector = sector,
-        });
-
-        copy(0x100000 + offset, scratch);
-
-        cluster = cluster.next() catch |err| {
-            if (err != fs.Cluster.Error.EndOfChain) {
-                @panic(@errorName(err));
-            } else {
-                break;
-            }
-        };
-        offset += 512;
-    }
+    var boot = try fs.root().open("NEXT.BIN");
+    try boot.read(@intToPtr([*]u8, 0x100000)[0..boot.size]);
 
     term.print("[+] switching to bootstrap\r\n", .{});
 
@@ -56,19 +36,6 @@ fn main(drive: u8, partition: *Partition, idx: u8) !void {
 
 pub fn panic(static: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
     term.fail("[-] PANIC: {s}", .{static});
-}
-
-fn copy(dst: u32, src: [512]u8) void {
-    asm volatile (
-        \\.intel_syntax noprefix
-        \\mov ecx, 512
-        \\rep movsb [esi], [edi]
-        \\.att_syntax prefix
-        :
-        : [_] "{esi}" (&src),
-          [_] "{edi}" (dst),
-        : "ecx", "esi", "edi"
-    );
 }
 
 //// pillaged from https://wiki.osdev.org/A20_Line

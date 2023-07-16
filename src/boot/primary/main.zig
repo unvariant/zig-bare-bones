@@ -24,7 +24,8 @@ export fn _start() callconv(.C) noreturn {
     asm volatile (
         \\.intel_syntax noprefix
         \\sti
-        \\int 0x0D
+        \\mov rax, 0xdeadbeef
+        \\mov qword ptr [rax], rax
         \\.att_syntax prefix
     );
 

@@ -1,41 +1,31 @@
 const std = @import("std");
 const mem = std.mem;
 const pathutil = std.fs.path;
-const partitions = @import("partitions");
 const term = @import("term.zig");
 const disk = @import("disk.zig");
 
 pub const Fs = @This();
+const Partition = @import("partition.zig");
 
-var partition_lba: u32 = undefined;
+cluster_bit_used: u8,
+cluster_bit_width: u8,
+fat_size: u32,
 
-var cluster_bits: u8 = undefined;
-var cluster_width: u8 = undefined;
+first_data_sector: u32,
+first_fat_sector: u32,
+first_root_cluster: u32,
 
-var fat_size: u32 = undefined;
+sectors_per_cluster: u8,
+bytes_per_sector: u16,
 
-var first_fat_sector: u32 = undefined;
-var first_data_sector: u32 = undefined;
-var first_root_cluster: u32 = undefined;
+total_sectors: u32,
+data_sectors: u32,
+reserved_sectors: u32,
+root_dir_sectors: u32,
+total_clusters: u32,
 
-var sectors_per_cluster: u8 = undefined;
-var bytes_per_sector: u16 = undefined;
-
-var total_sectors: u32 = undefined;
-var data_sectors: u32 = undefined;
-var reserved_sectors: u32 = undefined;
-var root_dir_sectors: u32 = undefined;
-var total_clusters: u32 = undefined;
-
-var kind: Kind = undefined;
-var root_directory = File{
-    .name = .{ '/', ' ', ' ', ' ', ' ', ' ', ' ', ' ' },
-    .attributes = 0x10,
-    .extension = .{ ' ', ' ', ' ' },
-    .cluster_hi = undefined,
-    .cluster_lo = undefined,
-    .size = undefined,
-};
+kind: Kind,
+partition: *Partition,
 
 const Kind = enum {
     fat12,
@@ -44,7 +34,7 @@ const Kind = enum {
 
     const Self = @This();
 
-    fn cluster_bits(self: *const Self) u8 {
+    fn cluster_bit_used(self: *const Self) u8 {
         return switch (self.*) {
             .fat12 => 12,
             .fat16 => 16,
@@ -52,7 +42,7 @@ const Kind = enum {
         };
     }
 
-    fn cluster_width(self: *const Self) u8 {
+    fn cluster_bit_width(self: *const Self) u8 {
         return switch (self.*) {
             .fat12 => 12,
             .fat16 => 16,
@@ -87,11 +77,103 @@ const File = extern struct {
     modified_date: Date align(1) = .{},
     cluster_lo: u16 align(1),
     size: u32 align(1),
+    fs: *Fs,
 
     const Self = @This();
+    const Error = error{
+        NotFound,
+        InvalidPath,
+    };
 
-    pub fn cluster(self: Self) Cluster {
-        return Cluster.new((@as(u32, self.cluster_hi) << 16) | @as(u32, self.cluster_lo));
+    pub fn cluster(self: Self, fs: *Fs) !Cluster {
+        return try Cluster.new(fs, (@as(u32, self.cluster_hi) << 16) | @as(u32, self.cluster_lo));
+    }
+
+    pub fn open(self: *const Self, path: []const u8) !Self {
+        const stem = pathutil.stem(path);
+        if (stem.len > 8) {
+            @panic("path name too long");
+        }
+
+        const ext = pathutil.extension(path)[1..];
+        if (ext.len > 3) {
+            @panic("extension too long");
+        }
+
+        var name = [_]u8{0x20} ** 8;
+        var extension = [_]u8{0x20} ** 3;
+        mem.copy(u8, &name, stem);
+        mem.copy(u8, &extension, ext);
+
+        var files = [_]File{undefined} ** 16;
+
+        var clusters = try self.cluster(self.fs);
+
+        while (true) {
+            const sector = clusters.sector(self.fs);
+
+            self.fs.partition.load(.{
+                .sector_count = 1,
+                .buffer = @ptrCast([*]u8, &files),
+                .sector = sector,
+            });
+
+            for (files) |file| {
+                if (file.name[0] == 0) {
+                    return Error.NotFound;
+                }
+
+                if (file.name[0] == 0xE5) {
+                    continue;
+                }
+
+                if (mem.eql(u8, &name, &file.name) and mem.eql(u8, &extension, &file.extension)) {
+                    return .{
+                        .name = file.name,
+                        .extension = file.extension,
+                        .attributes = file.attributes,
+                        .reserved_for_windowsNT = file.reserved_for_windowsNT,
+                        .deciseconds = file.deciseconds,
+                        .created_time = file.created_time,
+                        .created_date = file.created_date,
+                        .accessed_date = file.accessed_date,
+                        .cluster_hi = file.cluster_hi,
+                        .modified_time = file.modified_time,
+                        .modified_date = file.modified_date,
+                        .cluster_lo = file.cluster_lo,
+                        .size = file.size,
+                        .fs = self.fs,
+                    };
+                }
+            }
+
+            clusters = try clusters.next(self.fs);
+        }
+
+        return Error.NotFound;
+    }
+
+    pub fn read(self: *const Self, buffer: []u8) !void {
+        var offset: u32 = 0;
+        var scratch = [_]u8{0} ** 512;
+        var clusters = try self.cluster(self.fs);
+        while (offset < self.size) {
+            self.fs.partition.load(.{
+                .sector_count = 1,
+                .buffer = @ptrCast([*]u8, &scratch),
+                .sector = clusters.sector(self.fs),
+            });
+
+            mem.copy(u8, buffer[offset .. offset + 512], &scratch);
+
+            clusters = clusters.next(self.fs) catch |err| {
+                if (err == Cluster.Error.EndOfChain) {
+                    return;
+                }
+                return err;
+            };
+            offset += 512;
+        }
     }
 };
 
@@ -140,28 +222,27 @@ const Extended32 = extern struct {
     fat_type_label: [8]u8 align(1),
 };
 
-pub fn init(drive_number: u8, partition: *partitions.Partition, parameters_addr: usize) void {
-    disk.init(drive_number);
-
+pub fn from(partition: *Partition, parameters_addr: usize) Fs {
     const parameters = @intToPtr(*Parameters, parameters_addr);
 
-    total_sectors = @as(u32, parameters.total_sectors16);
+    var total_sectors = @as(u32, parameters.total_sectors16);
     if (total_sectors == 0) {
         total_sectors = parameters.total_sectors32;
     }
 
-    fat_size = @as(u32, parameters.table_size16);
+    var fat_size = @as(u32, parameters.table_size16);
     if (fat_size == 0) {
         fat_size = parameters.extended32().table_size32;
     }
 
-    root_dir_sectors = (parameters.root_entry_count * 32 + parameters.bytes_per_sector - 1) / parameters.bytes_per_sector;
-    first_data_sector = parameters.reserved_sectors + (parameters.fat_count * fat_size) + root_dir_sectors;
-    first_fat_sector = parameters.reserved_sectors;
-    data_sectors = total_sectors - (parameters.reserved_sectors + parameters.fat_count * fat_size + root_dir_sectors);
-    total_clusters = data_sectors / parameters.sectors_per_cluster;
+    var root_dir_sectors = (parameters.root_entry_count * 32 + parameters.bytes_per_sector - 1) / parameters.bytes_per_sector;
+    var first_data_sector = parameters.reserved_sectors + (parameters.fat_count * fat_size) + root_dir_sectors;
+    var first_fat_sector = parameters.reserved_sectors;
+    var data_sectors = total_sectors - (parameters.reserved_sectors + parameters.fat_count * fat_size + root_dir_sectors);
+    var total_clusters = data_sectors / parameters.sectors_per_cluster;
 
-    first_root_cluster = 2;
+    var first_root_cluster: u32 = 2;
+    var kind: Kind = undefined;
     if (total_clusters < 4085) {
         kind = .fat12;
     } else if (total_clusters < 65525) {
@@ -171,115 +252,40 @@ pub fn init(drive_number: u8, partition: *partitions.Partition, parameters_addr:
         first_root_cluster = parameters.extended32().root_cluster;
     }
 
-    partition_lba = partition.start_lba;
-
-    cluster_bits = kind.cluster_bits();
-    cluster_width = kind.cluster_width();
-
-    sectors_per_cluster = parameters.sectors_per_cluster;
-    bytes_per_sector = parameters.bytes_per_sector;
-    reserved_sectors = parameters.reserved_sectors;
-
-    root_directory.cluster_hi = @truncate(u16, first_root_cluster >> 16);
-    root_directory.cluster_lo = @truncate(u16, first_root_cluster);
+    return .{
+        .kind = kind,
+        .fat_size = fat_size,
+        .cluster_bit_used = kind.cluster_bit_used(),
+        .cluster_bit_width = kind.cluster_bit_width(),
+        .first_data_sector = first_data_sector,
+        .first_fat_sector = first_fat_sector,
+        .sectors_per_cluster = parameters.sectors_per_cluster,
+        .bytes_per_sector = parameters.bytes_per_sector,
+        .total_sectors = total_sectors,
+        .data_sectors = data_sectors,
+        .reserved_sectors = parameters.reserved_sectors,
+        .total_clusters = total_clusters,
+        .partition = partition,
+        .first_root_cluster = first_root_cluster,
+        .root_dir_sectors = root_dir_sectors,
+    };
 }
 
-pub fn root() File {
-    return root_directory;
+pub fn root(self: *Fs) File {
+    return .{
+        .name = .{ '/', ' ', ' ', ' ', ' ', ' ', ' ', ' ' },
+        .attributes = 0x10,
+        .extension = .{ ' ', ' ', ' ' },
+        .cluster_hi = @truncate(u16, self.first_root_cluster >> 16),
+        .cluster_lo = @truncate(u16, self.first_root_cluster),
+        .size = self.root_dir_sectors * self.bytes_per_sector,
+        .fs = self,
+    };
 }
 
-const FsError = error{
-    NotFound,
-    InvalidPath,
-};
-
-pub fn open(dir: File, path: []const u8) !File {
-    const stem = pathutil.stem(path);
-    if (stem.len > 8) {
-        @panic("path name too long");
-    }
-
-    const ext = pathutil.extension(path)[1..];
-    if (ext.len > 3) {
-        @panic("extension too long");
-    }
-
-    var name = [_]u8{0x20} ** 8;
-    var extension = [_]u8{0x20} ** 3;
-    @memcpy(@ptrCast([*]u8, &name), @ptrCast([*]const u8, stem), stem.len);
-    @memcpy(@ptrCast([*]u8, &extension), @ptrCast([*]const u8, ext), ext.len);
-
-    var files = [_]File{undefined} ** 16;
-
-    var cluster = dir.cluster();
-
-    while (true) {
-        const sector = cluster.sector() + partition_lba;
-
-        disk.load(.{
-            .sector_count = 1,
-            .buffer = @ptrCast([*]u8, &files),
-            .sector = sector,
-        });
-
-        for (files) |file| {
-            if (file.name[0] == 0) {
-                return FsError.NotFound;
-            }
-
-            if (file.name[0] == 0xE5) {
-                continue;
-            }
-
-            if (mem.eql(u8, &name, &file.name) and mem.eql(u8, &extension, &file.extension)) {
-                return .{
-                    .name = file.name,
-                    .extension = file.extension,
-                    .attributes = file.attributes,
-                    .reserved_for_windowsNT = file.reserved_for_windowsNT,
-                    .deciseconds = file.deciseconds,
-                    .created_time = file.created_time,
-                    .created_date = file.created_date,
-                    .accessed_date = file.accessed_date,
-                    .cluster_hi = file.cluster_hi,
-                    .modified_time = file.modified_time,
-                    .modified_date = file.modified_date,
-                    .cluster_lo = file.cluster_lo,
-                    .size = file.size,
-                };
-            }
-        }
-
-        cluster = try cluster.next();
-    }
-
-    return FsError.NotFound;
+fn cluster_mask(self: *const Fs) u32 {
+    return (@as(u32, 1) << @truncate(u5, self.cluster_bit_used)) - 1;
 }
-
-// pub fn read(file: File, buffer: []u8, seek: u32) !void {
-//     var offset: u32 = 0;
-//     var scratch = [_]u8{0} ** 512;
-//     var cluster = file.cluster();
-//     while (seek > 0) {
-//         cluster = cluster.next();
-//         seek -= 512;
-//     }
-
-//     while (offset < @min(buffer.len, file.size)) {
-//         var sector = cluster.sector() + partition_lba;
-
-//         disk.load(.{
-//             .sector_count = 1,
-//             .buffer = @ptrCast([*]u8, &scratch),
-//             .sector = sector,
-//         });
-
-//         @memcpy(buffer.ptr + offset, @ptrCast([*]u8, &scratch), buffer.len - offset);
-
-//         cluster = cluster.next();
-//         offset += 512;
-//     }
-// }
 
 pub const Cluster = struct {
     cluster: u32,
@@ -289,22 +295,24 @@ pub const Cluster = struct {
         EndOfChain,
     };
 
-    fn new(cluster: u32) Self {
-        return .{
-            .cluster = cluster & ((@as(u32, 1) << @truncate(u5, cluster_bits)) - 1),
-        };
+    fn new(fs: *const Fs, cluster: u32) !Self {
+        if (cluster >= 0xFFFFFFF8 & fs.cluster_mask()) {
+            return Error.EndOfChain;
+        }
+
+        return .{ .cluster = cluster & ((@as(u32, 1) << @truncate(u5, fs.cluster_bit_used)) - 1) };
     }
 
-    pub fn sector(self: *const Self) u32 {
-        return (self.cluster - 2) * sectors_per_cluster + first_data_sector;
+    pub fn sector(self: *const Self, fs: *const Fs) u32 {
+        return (self.cluster - 2) * fs.sectors_per_cluster + fs.first_data_sector;
     }
 
-    pub fn next(self: *const Self) !Self {
+    pub fn next(self: *const Self, fs: *const Fs) !Self {
         var scratch = [_]u8{0} ** 512;
         var cluster = self.cluster;
 
         var fat_offset: u32 = undefined;
-        switch (kind) {
+        switch (fs.kind) {
             Kind.fat12 => {
                 fat_offset = cluster + (cluster / 2);
             },
@@ -316,10 +324,10 @@ pub const Cluster = struct {
             },
         }
 
-        const next_sector = first_fat_sector + (fat_offset / bytes_per_sector) + partition_lba;
-        const offset = fat_offset % bytes_per_sector;
+        const next_sector = fs.first_fat_sector + (fat_offset / fs.bytes_per_sector);
+        const offset = fat_offset % fs.bytes_per_sector;
 
-        disk.load(.{
+        fs.partition.load(.{
             .sector_count = 1,
             .buffer = @ptrCast([*]u8, &scratch),
             .sector = next_sector,
@@ -327,7 +335,7 @@ pub const Cluster = struct {
 
         const raw = @ptrCast([*]u8, &scratch) + offset;
 
-        switch (kind) {
+        switch (fs.kind) {
             Kind.fat12 => {
                 const val = @ptrCast(*align(1) u16, raw).*;
                 if (cluster % 2 == 1) {
@@ -344,86 +352,6 @@ pub const Cluster = struct {
             },
         }
 
-        if (cluster >= 0xFFFFFFF8 & ((@as(u32, 1) << @truncate(u5, cluster_bits)) - 1)) {
-            return Error.EndOfChain;
-        }
-
-        return .{
-            .cluster = cluster,
-        };
+        return try Self.new(fs, cluster);
     }
 };
-
-// fn cluster_chain(self: *Fs, start_cluster: u32, closure: *const fn ([]u8) Status!*anyopaque) !*anyopaque {
-//     var scratch = [_]u8{0} ** 512;
-//     var mask = (@as(u32, 1) << @truncate(u5, self.cluster_bits)) - 1;
-//     var high = 0xFFFFFFF8 & mask;
-
-//     var cluster = start_cluster;
-//     while (cluster & mask < high) {
-//         var sector = self.cluster_to_sector(cluster);
-//         var leftover = self.bytes_per_sector * self.sectors_per_cluster;
-//         for (0..self.sectors_per_cluster) |_| {
-//             var sectors = self.bytes_per_sector / 512 + @boolToInt(self.bytes_per_sector % 512 != 0);
-//             for (0..sectors) |_| {
-//                 try self.load(.{
-//                     .sector_count = 1,
-//                     .buffer = &scratch,
-//                     .sector = sector,
-//                 });
-
-//                 if (closure(scratch[0..@min(512, leftover)])) |something| {
-//                     return something;
-//                 } else |err| {
-//                     if (err == Status.failure) {
-//                         return Error.Failure;
-//                     }
-//                 }
-//                 sector += 1;
-//                 leftover -= 512;
-//             }
-//         }
-
-//         var fat_offset: u32 = undefined;
-//         switch (self.kind()) {
-//             Kind.fat12 => {
-//                 fat_offset = cluster + (cluster / 2);
-//             },
-//             Kind.fat16 => {
-//                 fat_offset = cluster * 2;
-//             },
-//             Kind.fat32 => {
-//                 fat_offset = cluster * 4;
-//             },
-//         }
-
-//         const next_sector = self.first_fat_sector + (fat_offset / self.bytes_per_sector);
-//         const offset = fat_offset % self.bytes_per_sector;
-
-//         try self.load(.{
-//             .sector_count = 1,
-//             .buffer = &scratch,
-//             .sector = next_sector,
-//         });
-
-//         switch (self.kind()) {
-//             Kind.fat12 => {
-//                 const buffer = @ptrCast([*]align(1) u16, &scratch);
-//                 if (cluster % 2 == 1) {
-//                     cluster = @as(u32, buffer[offset] >> 4);
-//                 } else {
-//                     cluster = @as(u32, buffer[offset] & 0xFFF);
-//                 }
-//             },
-//             Kind.fat16 => {
-//                 const buffer = @ptrCast([*]align(1) u16, &scratch);
-//                 cluster = buffer[offset];
-//             },
-//             Kind.fat32 => {
-//                 cluster = @ptrCast([*]align(1) u32, &scratch)[offset];
-//             },
-//         }
-//     }
-
-//     return Error.NotFound;
-// }

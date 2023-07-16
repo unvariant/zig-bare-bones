@@ -1,4 +1,4 @@
-pub fn from(addr: u16) []Partition {
+pub fn from(addr: usize) []Partition {
     return @intToPtr([*]Partition, addr)[0..4];
 }
 

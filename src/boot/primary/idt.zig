@@ -645,12 +645,9 @@ export fn handle_interrupt(context: *Context) callconv(.C) void {
     }
 
     switch (context.intn) {
-        0x06, 0x0D => {
+        0x06, 0x0D, 0x0E => {
             dump_context(context);
             hang();
-        },
-        0x0E => {
-            alloc.handle_page_fault(@truncate(u32, context.error_code));
         },
         else => {},
     }

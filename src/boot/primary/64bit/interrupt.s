@@ -10,7 +10,8 @@ interrupt\n\():
     .global interrupt\n\()
 
     .if !((\n == 0x08) || (\n >= 0x0A && \n <= 0x0E) || (\n == 0x11) || (\n == 0x15) || (\n == 0x1D) || (\n == 0x1E))
-        push 0
+        sub rsp, 8
+        mov qword ptr [rsp], 0
     .endif
 
     push \n
