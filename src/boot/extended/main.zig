@@ -1,10 +1,10 @@
 const std = @import("std");
+const mem = std.mem;
 const Fs = @import("fs.zig");
 const term = @import("term.zig");
 const Disk = @import("disk.zig");
-
-const RawPartition = @import("partitions").Partition;
 const Partition = @import("partition.zig");
+const RawPartition = Partition.Raw;
 
 export fn _extended_entry(drive: u8, raw_partition: *RawPartition, idx: u8) linksection(".entry") callconv(.C) noreturn {
     main(drive, raw_partition, idx) catch |err| @panic(@errorName(err));
@@ -18,14 +18,14 @@ fn main(drive: u8, raw_partition: *RawPartition, idx: u8) !void {
 
     term.print("[+] enter extended bootloader\r\n", .{});
 
-    term.print("[+] boot args:\r\n- drive: 0x{X:0>2}\r\n- partition: {any}\r\n- index: {}\r\n", .{ drive, raw_partition, idx });
+    term.print("[+] boot args:\r\n- drive: 0x{x:0>2}\r\n- partition: {}\r\n- index: {}\r\n", .{ drive, raw_partition, idx });
 
     var disk = Disk.new(drive);
     var partition = Partition.from(&disk, raw_partition);
     var fs = Fs.from(&partition, 0x7C00);
 
     var boot = try fs.root().open("NEXT.BIN");
-    try boot.read(@intToPtr([*]u8, 0x100000)[0..boot.size]);
+    try boot.read(@as([*]u8, @ptrFromInt(0x100000))[0..mem.alignForward(usize, boot.raw.size, 512)]);
 
     term.print("[+] switching to bootstrap\r\n", .{});
 
@@ -87,7 +87,7 @@ export var descriptor = Descriptor{
 };
 
 fn enable_unreal_mode() void {
-    descriptor.gdt = @ptrToInt(&gdt);
+    descriptor.gdt = @intFromPtr(&gdt);
     asm volatile (
         \\.intel_syntax noprefix
         \\cli

@@ -64,7 +64,7 @@ fn make(step: *Step, progress: *std.Progress.Node) !void {
     });
     const length = try extended.getEndPos();
 
-    if (length > (64 - 2) * 512) {
+    if (length > (64 - 4) * 512) {
         return step.fail("extended bootloader too large", .{});
     }
 

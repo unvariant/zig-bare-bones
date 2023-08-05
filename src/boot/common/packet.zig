@@ -26,7 +26,7 @@ pub const Packet = packed struct {
     const Self = @This();
 
     pub fn load(self: *const Self) bool {
-        const packet = @ptrToInt(self);
+        const packet = @intFromPtr(self);
         return asm volatile (
             \\movb  $0x42, %ah
             \\int   $0x13

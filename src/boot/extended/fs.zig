@@ -63,7 +63,7 @@ const Date = packed struct {
     created_year: u7 = 0,
 };
 
-const File = extern struct {
+const RawFile = extern struct {
     name: [8]u8 align(1),
     extension: [3]u8 align(1),
     attributes: u8 align(1),
@@ -77,6 +77,14 @@ const File = extern struct {
     modified_date: Date align(1) = .{},
     cluster_lo: u16 align(1),
     size: u32 align(1),
+
+    comptime {
+        std.debug.assert(@sizeOf(@This()) == 0x20);
+    }
+};
+
+const File = struct {
+    raw: RawFile,
     fs: *Fs,
 
     const Self = @This();
@@ -86,7 +94,7 @@ const File = extern struct {
     };
 
     pub fn cluster(self: Self, fs: *Fs) !Cluster {
-        return try Cluster.new(fs, (@as(u32, self.cluster_hi) << 16) | @as(u32, self.cluster_lo));
+        return try Cluster.new(fs, (@as(u32, self.raw.cluster_hi) << 16) | @as(u32, self.raw.cluster_lo));
     }
 
     pub fn open(self: *const Self, path: []const u8) !Self {
@@ -105,16 +113,15 @@ const File = extern struct {
         mem.copy(u8, &name, stem);
         mem.copy(u8, &extension, ext);
 
-        var files = [_]File{undefined} ** 16;
+        var files = [_]RawFile{undefined} ** 16;
 
         var clusters = try self.cluster(self.fs);
 
         while (true) {
             const sector = clusters.sector(self.fs);
-
             self.fs.partition.load(.{
                 .sector_count = 1,
-                .buffer = @ptrCast([*]u8, &files),
+                .buffer = @ptrCast(&files),
                 .sector = sector,
             });
 
@@ -129,19 +136,7 @@ const File = extern struct {
 
                 if (mem.eql(u8, &name, &file.name) and mem.eql(u8, &extension, &file.extension)) {
                     return .{
-                        .name = file.name,
-                        .extension = file.extension,
-                        .attributes = file.attributes,
-                        .reserved_for_windowsNT = file.reserved_for_windowsNT,
-                        .deciseconds = file.deciseconds,
-                        .created_time = file.created_time,
-                        .created_date = file.created_date,
-                        .accessed_date = file.accessed_date,
-                        .cluster_hi = file.cluster_hi,
-                        .modified_time = file.modified_time,
-                        .modified_date = file.modified_date,
-                        .cluster_lo = file.cluster_lo,
-                        .size = file.size,
+                        .raw = file,
                         .fs = self.fs,
                     };
                 }
@@ -157,10 +152,11 @@ const File = extern struct {
         var offset: u32 = 0;
         var scratch = [_]u8{0} ** 512;
         var clusters = try self.cluster(self.fs);
-        while (offset < self.size) {
+        while (offset < self.raw.size) {
+            term.print("offset: {}, size: {}\r\n", .{ offset, self.raw.size });
             self.fs.partition.load(.{
                 .sector_count = 1,
-                .buffer = @ptrCast([*]u8, &scratch),
+                .buffer = @as([*]u8, @ptrCast(&scratch)),
                 .sector = clusters.sector(self.fs),
             });
 
@@ -202,7 +198,7 @@ pub const Parameters = extern struct {
     const Self = @This();
 
     fn extended32(self: *const Self) *align(1) const Extended32 {
-        return @ptrCast(*align(1) const Extended32, &self.extended);
+        return @as(*align(1) const Extended32, @ptrCast(&self.extended));
     }
 };
 
@@ -223,7 +219,7 @@ const Extended32 = extern struct {
 };
 
 pub fn from(partition: *Partition, parameters_addr: usize) Fs {
-    const parameters = @intToPtr(*Parameters, parameters_addr);
+    const parameters = @as(*Parameters, @ptrFromInt(parameters_addr));
 
     var total_sectors = @as(u32, parameters.total_sectors16);
     if (total_sectors == 0) {
@@ -273,18 +269,20 @@ pub fn from(partition: *Partition, parameters_addr: usize) Fs {
 
 pub fn root(self: *Fs) File {
     return .{
-        .name = .{ '/', ' ', ' ', ' ', ' ', ' ', ' ', ' ' },
-        .attributes = 0x10,
-        .extension = .{ ' ', ' ', ' ' },
-        .cluster_hi = @truncate(u16, self.first_root_cluster >> 16),
-        .cluster_lo = @truncate(u16, self.first_root_cluster),
-        .size = self.root_dir_sectors * self.bytes_per_sector,
+        .raw = .{
+            .name = .{ '/', ' ', ' ', ' ', ' ', ' ', ' ', ' ' },
+            .attributes = 0x10,
+            .extension = .{ ' ', ' ', ' ' },
+            .cluster_hi = @as(u16, @truncate(self.first_root_cluster >> 16)),
+            .cluster_lo = @as(u16, @truncate(self.first_root_cluster)),
+            .size = self.root_dir_sectors * self.bytes_per_sector,
+        },
         .fs = self,
     };
 }
 
 fn cluster_mask(self: *const Fs) u32 {
-    return (@as(u32, 1) << @truncate(u5, self.cluster_bit_used)) - 1;
+    return (@as(u32, 1) << @as(u5, @truncate(self.cluster_bit_used))) - 1;
 }
 
 pub const Cluster = struct {
@@ -300,7 +298,7 @@ pub const Cluster = struct {
             return Error.EndOfChain;
         }
 
-        return .{ .cluster = cluster & ((@as(u32, 1) << @truncate(u5, fs.cluster_bit_used)) - 1) };
+        return .{ .cluster = cluster & ((@as(u32, 1) << @as(u5, @truncate(fs.cluster_bit_used))) - 1) };
     }
 
     pub fn sector(self: *const Self, fs: *const Fs) u32 {
@@ -329,15 +327,15 @@ pub const Cluster = struct {
 
         fs.partition.load(.{
             .sector_count = 1,
-            .buffer = @ptrCast([*]u8, &scratch),
+            .buffer = @as([*]u8, @ptrCast(&scratch)),
             .sector = next_sector,
         });
 
-        const raw = @ptrCast([*]u8, &scratch) + offset;
+        const raw = @as([*]u8, @ptrCast(&scratch)) + offset;
 
         switch (fs.kind) {
             Kind.fat12 => {
-                const val = @ptrCast(*align(1) u16, raw).*;
+                const val = @as(*align(1) u16, @ptrCast(raw)).*;
                 if (cluster % 2 == 1) {
                     cluster = @as(u32, val >> 4);
                 } else {
@@ -345,10 +343,10 @@ pub const Cluster = struct {
                 }
             },
             Kind.fat16 => {
-                cluster = @ptrCast(*align(1) u16, raw).*;
+                cluster = @as(*align(1) u16, @ptrCast(raw)).*;
             },
             Kind.fat32 => {
-                cluster = @ptrCast(*align(1) u32, raw).*;
+                cluster = @as(*align(1) u32, @ptrCast(raw)).*;
             },
         }
 

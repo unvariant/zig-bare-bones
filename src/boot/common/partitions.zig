@@ -1,5 +1,5 @@
 pub fn from(addr: usize) []Partition {
-    return @intToPtr([*]Partition, addr)[0..4];
+    return @as([*]Partition, @ptrFromInt(addr))[0..4];
 }
 
 pub fn first_bootable(parts: []Partition) ?*Partition {

@@ -18,23 +18,6 @@ pub fn build(b: *Build) void {
 }
 
 fn buildErr(b: *Build) !void {
-    var add = FeatureSet.empty;
-    var sub = FeatureSet.empty;
-    add.addFeature(@enumToInt(feature.soft_float));
-    sub.addFeature(@enumToInt(feature.mmx));
-    sub.addFeature(@enumToInt(feature.sse));
-    sub.addFeature(@enumToInt(feature.sse2));
-    sub.addFeature(@enumToInt(feature.avx));
-    sub.addFeature(@enumToInt(feature.avx2));
-
-    const target16 = .{
-        .cpu_arch = .x86,
-        .os_tag = .freestanding,
-        .abi = .code16,
-        .cpu_features_add = add,
-        .cpu_features_sub = sub,
-    };
-
     const target64 = .{
         .cpu_arch = .x86_64,
         .os_tag = .freestanding,
@@ -159,84 +142,6 @@ fn buildBootstrap(b: *Build, options: struct {
     step.dependOn(&emulate.step);
 }
 
-const BuildOptions = struct {
-    name: []const u8,
-    path: []const u8,
-    target: CrossTarget,
-    optimize: builtin.OptimizeMode = .Debug,
-};
-
-fn buildBootModule(b: *Build, options: BuildOptions) !void {
-    const elf = try buildModule(b, options);
-    const dst = try fs.path.join(b.allocator, &.{
-        "boot",
-        b.fmt("{s}.bin", .{
-            options.name,
-        }),
-    });
-    installAt(b, flatBinary(b, elf), dst);
-}
-
-fn installAt(b: *Build, bin: anytype, path: []const u8) void {
-    b.getInstallStep().dependOn(&b.addInstallFile(bin.getOutputSource(), path).step);
-}
-
-fn flatBinary(b: *Build, elf: *CompileStep) *Build.ObjCopyStep {
-    return b.addObjCopy(elf.getOutputSource(), .{ .format = .bin });
-}
-
-fn buildModule(b: *Build, options: BuildOptions) !*CompileStep {
-    const arena = b.allocator;
-    const common = try files(arena, "common", .{});
-    const assembly = try files(arena, options.path, .{});
-
-    const main = try fs.path.join(arena, &.{
-        options.path,
-        "main.zig",
-    });
-    const linker_script = try fs.path.join(arena, &.{
-        options.path,
-        "linker.ld",
-    });
-
-    const elf = b.addExecutable(.{
-        .name = options.name,
-        .root_source_file = .{
-            .path = main,
-        },
-        .target = options.target,
-        .optimize = options.optimize,
-    });
-    elf.setLinkerScriptPath(.{
-        .path = linker_script,
-    });
-
-    for (assembly.items) |path| {
-        if (isExtention(path, ".s")) {
-            elf.addAssemblyFile(path);
-        }
-    }
-
-    for (common.items) |path| {
-        if (isExtention(path, ".zig")) {
-            const name = fs.path.stem(path);
-            elf.addAnonymousModule(name, .{
-                .source_file = .{
-                    .path = path,
-                },
-            });
-        }
-    }
-
-    elf.install();
-
-    return elf;
-}
-
-fn isExtention(path: []const u8, extension: []const u8) bool {
-    return mem.eql(u8, extension, fs.path.extension(path));
-}
-
 fn buildCode16(b: *Build) !*CompileStep {
     const target = CrossTarget{
         .cpu_arch = .x86,
@@ -299,39 +204,4 @@ fn buildCode64(b: *Build) !*CompileStep {
     });
 
     return code64;
-}
-
-fn files(arena: anytype, path: []const u8, options: struct {
-    recursive: bool = true,
-}) !ArrayList([]const u8) {
-    var file_list = ArrayList([]const u8).init(arena);
-
-    var directory = try fs.cwd().openIterableDir(path, .{});
-    defer directory.close();
-
-    var it = directory.iterate();
-    while (try it.next()) |entry| {
-        switch (entry.kind) {
-            .File => {
-                const file_path = try fs.path.join(arena, &[_][]const u8{
-                    path,
-                    entry.name,
-                });
-                try file_list.append(file_path);
-            },
-            .Directory => {
-                const directory_path = try fs.path.join(arena, &[_][]const u8{
-                    path,
-                    entry.name,
-                });
-                const recursive = try files(arena, directory_path, options);
-                try file_list.appendSlice(recursive.items);
-                recursive.deinit();
-                arena.free(directory_path);
-            },
-            else => {},
-        }
-    }
-
-    return file_list;
 }

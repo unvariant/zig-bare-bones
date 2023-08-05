@@ -34,12 +34,12 @@ pub fn load(self: *Disk, options: struct {
     buffer: [*]u8,
     sector: u32,
 }) void {
-    const addr = @ptrToInt(options.buffer);
+    const addr = @intFromPtr(options.buffer);
     var packet: Packet align(4) = Packet{
         .size = 0x10,
         .sector_count = undefined,
-        .offset = @truncate(u16, addr),
-        .segment = @truncate(u16, addr >> 4 & 0xF000),
+        .offset = @as(u16, @truncate(addr)),
+        .segment = @as(u16, @truncate(addr >> 4 & 0xF000)),
         .sector = options.sector,
     };
 
