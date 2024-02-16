@@ -1,4 +1,7 @@
 # zig-os
+
+**NOTE**: THIS README IS VERY OUTDATED
+
 (Currently it is only a bootloader)
 - [bootloader](#bootloader)
 - [master bootsector](#master-bootsector)
