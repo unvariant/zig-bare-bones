@@ -11,8 +11,11 @@ const ebda = @import("ebda.zig");
 const rsdp = @import("rsdp.zig");
 const rsdt = @import("rsdt.zig");
 const alloc = @import("alloc.zig");
+const SymbolHack = @import("symbol-hack.zig");
 
 export fn _start() callconv(.C) noreturn {
+    _ = SymbolHack;
+
     pic.init();
     idt.fill_table();
     idt.load();
@@ -20,14 +23,6 @@ export fn _start() callconv(.C) noreturn {
     term.init();
 
     rsdt.parse();
-
-    asm volatile (
-        \\.intel_syntax noprefix
-        \\sti
-        \\mov rax, 0xdeadbeef
-        \\mov qword ptr [rax], rax
-        \\.att_syntax prefix
-    );
 
     @panic("halted execution.");
 }

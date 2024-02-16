@@ -30,9 +30,9 @@ pub fn new(drive: u8) Disk {
 }
 
 pub fn load(self: *Disk, options: struct {
+    sector_start: u32,
     sector_count: u16,
     buffer: [*]u8,
-    sector: u32,
 }) void {
     const addr = @intFromPtr(options.buffer);
     var packet: Packet align(4) = Packet{
@@ -40,7 +40,7 @@ pub fn load(self: *Disk, options: struct {
         .sector_count = undefined,
         .offset = @as(u16, @truncate(addr)),
         .segment = @as(u16, @truncate(addr >> 4 & 0xF000)),
-        .sector = options.sector,
+        .sector = options.sector_start,
     };
 
     var leftover = options.sector_count;

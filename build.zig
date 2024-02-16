@@ -51,6 +51,13 @@ fn buildWillPossiblyError(b: *Builder) !void {
         .cpu_features_add = add,
         .cpu_features_sub = sub,
     };
+    const target64 = .{
+        .cpu_arch = .x86_64,
+        .os_tag = .freestanding,
+        .abi = .none,
+        .cpu_features_add = add,
+        .cpu_features_sub = sub,
+    };
     const mbrsector = try buildBootModule(b, .{
         .path = "src/boot/mbrsector",
         .target = target16,
@@ -64,22 +71,40 @@ fn buildWillPossiblyError(b: *Builder) !void {
     const extended = try buildBootModule(b, .{
         .path = "src/boot/extended",
         .target = target16,
-        .optimize = .ReleaseSafe,
+        .optimize = .ReleaseSmall,
     });
+
+    const primary = b.addExecutable(.{
+        .name = "primary",
+        .root_source_file = .{
+            .path = "src/boot/primary/main.zig",
+        },
+        .target = target64,
+        .optimize = .ReleaseSmall,
+    });
+    primary.addAssemblyFile(.{ .path = "src/boot/primary/32bit/code32.s" });
+    primary.addAssemblyFile(.{ .path = "src/boot/primary/64bit/code64.s" });
+    primary.addAssemblyFile(.{ .path = "src/boot/primary/64bit/interrupt.s" });
+    primary.setLinkerScriptPath(.{ .path = "src/boot/primary/linker.ld" });
+
+    const kernel = flatBinary(b, primary);
 
     const create_disk = b.addSystemCommand(&.{ "dd", "if=/dev/zero", "of=disk.img", "bs=1M", "count=64" });
     const create_partition_table = b.addSystemCommand(&.{ "mpartition", "-I", "-B" });
     create_partition_table.addFileArg(mbrsector.getOutput());
-    create_partition_table.addArg("A:");
-    const create_partition = b.addSystemCommand(&.{ "mpartition", "-c", "-a", "A:" });
+    create_partition_table.addArg("C:");
+    const create_partition = b.addSystemCommand(&.{ "mpartition", "-c", "-a", "C:" });
     const format_partition = b.addSystemCommand(&.{ "mformat", "-F", "-R", "64", "-B" });
     format_partition.addFileArg(fatbootsector.getOutput());
-    format_partition.addArg("A:");
+    format_partition.addArg("C:");
     const add_extended_bootloader = ExtendedBootloader.create(b, .{
         .disk_image = .{ .path = "disk.img" },
         .extended_bootloader = extended.getOutput(),
     });
-    const add_loader = b.addSystemCommand(&.{ "mcopy", "zig-out/boot/next.bin", "A:" });
+    const add_loader = b.addSystemCommand(&.{"mcopy"});
+    add_loader.addFileArg(kernel.getOutput());
+    add_loader.addArgs(&.{"C:/next.bin"});
+    // const add_loader = b.addSystemCommand(&.{ "mcopy", "zig-out/boot/next.bin", "C:" });
 
     create_partition_table.step.dependOn(&mbrsector.step);
     create_partition_table.step.dependOn(&create_disk.step);
@@ -159,7 +184,8 @@ fn buildModule(b: *Build, options: BuildOptions) !*Compile {
     }
 
     for (common.items) |path| {
-        elf.addAnonymousModule(path, .{
+        const module_name = fs.path.stem(path);
+        elf.addAnonymousModule(module_name, .{
             .source_file = .{ .path = path },
         });
     }

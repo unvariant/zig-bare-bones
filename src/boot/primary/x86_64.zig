@@ -58,5 +58,5 @@ pub fn read_cr3() Cr3 {
         \\.att_syntax prefix
         : [cr3] "={rax}" (cr3),
     );
-    return @bitCast(Cr3, cr3);
+    return @as(Cr3, @bitCast(cr3));
 }

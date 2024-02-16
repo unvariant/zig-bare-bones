@@ -24,7 +24,7 @@ pub var regions: []Region = undefined;
 
 pub fn init() void {
     len = __e820_memory_map_len;
-    regions = @ptrCast([*]Region, &__e820_memory_map)[0..len];
+    regions = @as([*]Region, @ptrCast(&__e820_memory_map))[0..len];
 }
 
 pub fn dump() void {

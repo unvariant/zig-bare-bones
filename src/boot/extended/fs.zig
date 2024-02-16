@@ -79,25 +79,54 @@ const RawFile = extern struct {
     size: u32 align(1),
 
     comptime {
-        std.debug.assert(@sizeOf(@This()) == 0x20);
+        if (@sizeOf(@This()) != 0x20) {
+            @compileError("RawFile is improperly sized");
+        }
     }
 };
 
 const File = struct {
     raw: RawFile,
+    offset: usize,
     fs: *Fs,
 
     const Self = @This();
     const Error = error{
         NotFound,
         InvalidPath,
-    };
+    } || Cluster.Error;
 
-    pub fn cluster(self: Self, fs: *Fs) !Cluster {
-        return try Cluster.new(fs, (@as(u32, self.raw.cluster_hi) << 16) | @as(u32, self.raw.cluster_lo));
+    const Reader = std.io.Reader(*Self, Error, read);
+    const Seeker = std.io.SeekableStream(*Self, Error, Error, seekTo, seekBy, getPos, getEndPos);
+
+    pub usingnamespace Reader;
+    pub usingnamespace Seeker;
+
+    pub fn reader(self: *Self) Reader {
+        return .{ .context = self };
     }
 
-    pub fn open(self: *const Self, path: []const u8) !Self {
+    pub fn seeker(self: *Self) Seeker {
+        return .{ .context = self };
+    }
+
+    fn seekTo(self: *Self, offset: u64) Error!void {
+        self.offset = offset;
+    }
+
+    fn seekBy(self: *Self, offset: i64) Error!void {
+        self.offset += offset;
+    }
+
+    fn getPos(self: *Self) Error!u64 {
+        return self.offset;
+    }
+
+    fn getEndPos(self: *Self) Error!u64 {
+        return self.raw.size;
+    }
+
+    pub fn open(self: *const Self, path: []const u8) Error!Self {
         const stem = pathutil.stem(path);
         if (stem.len > 8) {
             @panic("path name too long");
@@ -120,9 +149,9 @@ const File = struct {
         while (true) {
             const sector = clusters.sector(self.fs);
             self.fs.partition.load(.{
+                .sector_start = sector,
                 .sector_count = 1,
                 .buffer = @ptrCast(&files),
-                .sector = sector,
             });
 
             for (files) |file| {
@@ -138,6 +167,7 @@ const File = struct {
                     return .{
                         .raw = file,
                         .fs = self.fs,
+                        .offset = 0,
                     };
                 }
             }
@@ -148,28 +178,34 @@ const File = struct {
         return Error.NotFound;
     }
 
-    pub fn read(self: *const Self, buffer: []u8) !void {
-        var offset: u32 = 0;
+    fn read(self: *Self, buffer: []u8) Error!usize {
         var scratch = [_]u8{0} ** 512;
         var clusters = try self.cluster(self.fs);
-        while (offset < self.raw.size) {
-            term.print("offset: {}, size: {}\r\n", .{ offset, self.raw.size });
+        var offset_start = self.offset;
+        while (self.offset < self.raw.size) {
+            // term.print("offset: {}, size: {}\r\n", .{ self.offset, self.raw.size });
             self.fs.partition.load(.{
+                .sector_start = clusters.sector(self.fs),
                 .sector_count = 1,
                 .buffer = @as([*]u8, @ptrCast(&scratch)),
-                .sector = clusters.sector(self.fs),
             });
 
-            mem.copy(u8, buffer[offset .. offset + 512], &scratch);
+            @memcpy(buffer[self.offset .. self.offset + 512], &scratch);
+            self.offset += 512;
 
             clusters = clusters.next(self.fs) catch |err| {
                 if (err == Cluster.Error.EndOfChain) {
-                    return;
+                    return self.offset - offset_start;
                 }
                 return err;
             };
-            offset += 512;
         }
+
+        unreachable;
+    }
+
+    pub fn cluster(self: Self, fs: *Fs) Error!Cluster {
+        return try Cluster.new(fs, (@as(u32, self.raw.cluster_hi) << 16) | @as(u32, self.raw.cluster_lo));
     }
 };
 
@@ -278,6 +314,7 @@ pub fn root(self: *Fs) File {
             .size = self.root_dir_sectors * self.bytes_per_sector,
         },
         .fs = self,
+        .offset = 0,
     };
 }
 
@@ -293,7 +330,7 @@ pub const Cluster = struct {
         EndOfChain,
     };
 
-    fn new(fs: *const Fs, cluster: u32) !Self {
+    fn new(fs: *const Fs, cluster: u32) Error!Self {
         if (cluster >= 0xFFFFFFF8 & fs.cluster_mask()) {
             return Error.EndOfChain;
         }
@@ -305,7 +342,7 @@ pub const Cluster = struct {
         return (self.cluster - 2) * fs.sectors_per_cluster + fs.first_data_sector;
     }
 
-    pub fn next(self: *const Self, fs: *const Fs) !Self {
+    pub fn next(self: *const Self, fs: *const Fs) Error!Self {
         var scratch = [_]u8{0} ** 512;
         var cluster = self.cluster;
 
@@ -326,9 +363,9 @@ pub const Cluster = struct {
         const offset = fat_offset % fs.bytes_per_sector;
 
         fs.partition.load(.{
+            .sector_start = next_sector,
             .sector_count = 1,
             .buffer = @as([*]u8, @ptrCast(&scratch)),
-            .sector = next_sector,
         });
 
         const raw = @as([*]u8, @ptrCast(&scratch)) + offset;

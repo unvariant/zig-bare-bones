@@ -10,11 +10,11 @@ RUN apt-get update && apt-get -y install \
     fdisk \
     gcc \
     && rm -rf /var/lib/apt/lists/*
-RUN wget https://ziglang.org/builds/zig-linux-x86_64-0.11.0-dev.2477+2ee328995.tar.xz \
+RUN wget https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz \
     && wget http://ftp.gnu.org/gnu/mtools/mtools-4.0.43.tar.gz \
-    && tar -xvf zig-linux-x86_64-0.11.0-dev.2477+2ee328995.tar.xz \
+    && tar -xvf zig-linux-x86_64-0.11.0.tar.xz \
     && tar -xvf mtools-4.0.43.tar.gz \
-    && mv zig-linux-x86_64-0.11.0-dev.2477+2ee328995 zig \
+    && mv zig-linux-x86_64-0.11.0 zig \
     && mv mtools-4.0.43 mtools
 RUN cd mtools && ./configure && make
 ENV PATH="/build/mtools:/build/zig:${PATH}"
@@ -23,7 +23,7 @@ COPY src src
 COPY build.zig .
 COPY mtools.conf /etc/mtools.conf
 
-RUN zig build disk
+RUN zig build make
 
 FROM ubuntu:22.04
 

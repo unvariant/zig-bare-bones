@@ -73,16 +73,17 @@ pub fn printf(comptime format: []const u8, args: anytype) void {
 }
 
 pub fn init() void {
-    pixels_height = @intCast(usize, __vesa_height);
-    pixels_width = @intCast(usize, __vesa_width);
-    pixels_per_line = @intCast(usize, __vesa_pitch) / 4;
+    pixels_height = @intCast(__vesa_height);
+    pixels_width = @intCast(__vesa_width);
+    pixels_per_line = @intCast(__vesa_pitch);
+    pixels_per_line /= 4;
 
     width = pixels_width / font_width;
     height = pixels_height / font_height;
-    framebuffer = @intToPtr([*]volatile u32, __vesa_framebuffer);
-    font_map = @ptrCast([*]u8, &__font_map)[0..4096];
+    framebuffer = @as([*]volatile u32, @ptrFromInt(__vesa_framebuffer));
+    font_map = @as([*]u8, @ptrCast(&__font_map))[0..4096];
 
-    const pages: usize = mem.alignForward(@intCast(usize, __vesa_pitch) * pixels_height, 0x1000) / 0x1000;
+    const pages: usize = mem.alignForward(usize, @as(usize, @intCast(__vesa_pitch)) * pixels_height, 0x1000) / 0x1000;
     var page: usize = 0;
     while (page < pages) : (page += 1) {
         paging.identity_map(__vesa_framebuffer + page * 0x1000);
@@ -101,7 +102,7 @@ pub fn line_start() void {
 
 pub fn clear() void {
     const size: usize = pixels_per_line * pixels_height;
-    mem.set(u32, @intToPtr([*]u32, __vesa_framebuffer)[0..size], 0xFFFFFF);
+    @memset(@as([*]u32, @ptrFromInt(__vesa_framebuffer))[0..size], 0xFFFFFF);
 }
 
 pub fn set_color(new_color: TermColor) void {

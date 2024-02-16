@@ -112,7 +112,7 @@ vesa$print_str:
 
 
 vesa$init_str: .asciz "beginning vesa scan"
-vesa$fini_str: .asicz "finished vesa scan"
+vesa$fini_str: .asciz "finished vesa scan"
 vesa$error_str: .asciz "vesa error occurred"
 vesa$mode_found: .asciz "vesa mode found"
 

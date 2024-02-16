@@ -80,7 +80,7 @@ fn make(step: *Step, progress: *std.Progress.Node) !void {
     self.output_file.path = full_dest_path;
 
     const argv = [_][]const u8{
-        "x86_64-elf-as",
+        "as",
         "-o",
         full_dest_path,
         full_src_path,

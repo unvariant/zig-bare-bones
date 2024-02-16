@@ -9,7 +9,7 @@ pub fn search(buffer: []u8) ?*RSDPDescriptorV1 {
         var idx: usize = 0;
         while (idx < aligned.len) {
             if (mem.alignInBytes(aligned[idx..aligned.len], 16)) |bytes| {
-                const descriptor = @ptrCast(*RSDPDescriptorV1, bytes.ptr);
+                const descriptor = @as(*RSDPDescriptorV1, @ptrCast(bytes.ptr));
                 if (sanity_check(descriptor)) {
                     return descriptor;
                 }
@@ -29,12 +29,12 @@ const RSDPDescriptorV1 = extern struct {
 };
 
 fn calculate_checksum(descriptor: *RSDPDescriptorV1) u8 {
-    const buffer = @ptrCast([*]u8, descriptor)[0..@sizeOf(RSDPDescriptorV1)];
+    const buffer = @as([*]u8, @ptrCast(descriptor))[0..@sizeOf(RSDPDescriptorV1)];
     var sum: usize = 0;
     for (buffer) |b| {
         sum += b;
     }
-    return @intCast(u8, sum & 0xFF);
+    return @as(u8, @intCast(sum & 0xFF));
 }
 
 fn sanity_check(descriptor: *RSDPDescriptorV1) bool {
@@ -46,7 +46,7 @@ pub fn load() ?*RSDPDescriptorV1 {
         return descriptor;
     }
 
-    if (search(@as([]u8, @intToPtr([*]u8, 0xE0000)[0..0x20000]))) |descriptor| {
+    if (search(@as([]u8, @as([*]u8, @ptrFromInt(0xE0000))[0..0x20000]))) |descriptor| {
         return descriptor;
     }
 

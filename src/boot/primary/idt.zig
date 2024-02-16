@@ -27,9 +27,9 @@ var interrupt_table: [256]Descriptor = undefined;
 var interrupt_table_descriptor: InterruptTableDescriptor = undefined;
 
 pub fn set(n: usize, handler: *const fn () callconv(.C) void, gate_type: u8, privilege: u8, present: u8) void {
-    const offset = @ptrToInt(handler);
-    const lo = @intCast(u16, offset & 0xFFFF);
-    const hi = @intCast(u42, offset >> 16);
+    const offset = @intFromPtr(handler);
+    const lo = @as(u16, @intCast(offset & 0xFFFF));
+    const hi = @as(u42, @intCast(offset >> 16));
     const flags = (present << 7) | (privilege << 5) | gate_type;
 
     interrupt_table[n] = Descriptor{
@@ -560,7 +560,7 @@ pub fn fill_table() void {
 
 pub fn load() void {
     interrupt_table_descriptor.size = 256 * 16 - 1;
-    interrupt_table_descriptor.offset = @ptrToInt(&interrupt_table);
+    interrupt_table_descriptor.offset = @intFromPtr(&interrupt_table);
 
     asm volatile (
         \\.intel_syntax noprefix

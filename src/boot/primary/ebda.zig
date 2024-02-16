@@ -7,11 +7,11 @@ const mem = @import("std").mem;
 // | 0x413   | 2     | offset (in KiB) after EDBA base address to usable EBDA memory
 
 fn access(comptime T: type, addr: usize) T {
-    return @intToPtr(*align(1) volatile T, addr).*;
+    return @as(*align(1) volatile T, @ptrFromInt(addr)).*;
 }
 
 fn base_addr() usize {
-    return @intCast(usize, access(u16, 0x40E)) << 4;
+    return @as(usize, @intCast(access(u16, 0x40E))) << 4;
 }
 
 fn len() usize {
@@ -20,7 +20,7 @@ fn len() usize {
 
 pub fn memory() []u8 {
     const ebda = base_addr();
-    return @intToPtr([*]u8, ebda)[0..len()];
+    return @as([*]u8, @ptrFromInt(ebda))[0..len()];
 }
 
 pub fn search_for_rdsp() ?usize {
@@ -28,7 +28,7 @@ pub fn search_for_rdsp() ?usize {
     const ebda = memory();
 
     if (mem.indexOf(u8, ebda, rdsp_signature)) |idx| {
-        return @ptrToInt(ebda.ptr + idx);
+        return @intFromPtr(ebda.ptr + idx);
     } else {
         return null;
     }

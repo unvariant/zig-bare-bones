@@ -1,10 +1,10 @@
-const Partitions = @import("src/boot/common/partitions.zig");
-const Packet = @import("src/boot/common/packet.zig");
+const Partitions = @import("partitions");
+const Packet = @import("packet");
 
 extern const __partition_table: usize;
 
 export fn _zig_entry(drive: u8) callconv(.C) noreturn {
-    print("[+] entering mbrsector\r\n");
+    print("[+] entered mbrsector\r\n");
 
     const addr: u16 = @truncate(@intFromPtr(&__partition_table));
     const parts = Partitions.from(addr);

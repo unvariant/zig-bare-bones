@@ -22,11 +22,11 @@ pub fn parse() void {
     if (rsdp.load()) |descriptor| {
         zterm.printf("rsdt address: {X}h\n", .{descriptor.rsdt});
         alloc.identity_map(@as(u64, descriptor.rsdt));
-        const header = @intToPtr(*align(1) ACPI_SDT_Header, descriptor.rsdt);
+        const header = @as(*align(1) ACPI_SDT_Header, @ptrFromInt(descriptor.rsdt));
         log_signature(header);
-        const tables = @intToPtr([*]align(1) u32, @ptrToInt(header) + @sizeOf(ACPI_SDT_Header))[0 .. (header.length - @sizeOf(ACPI_SDT_Header)) / 4];
+        const tables = @as([*]align(1) u32, @ptrFromInt(@intFromPtr(header) + @sizeOf(ACPI_SDT_Header)))[0 .. (header.length - @sizeOf(ACPI_SDT_Header)) / 4];
         for (tables) |addr| {
-            log_signature(@intToPtr(*align(1) ACPI_SDT_Header, addr));
+            log_signature(@as(*align(1) ACPI_SDT_Header, @ptrFromInt(addr)));
         }
     }
 }

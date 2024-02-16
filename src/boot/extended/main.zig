@@ -4,9 +4,14 @@ const Fs = @import("fs.zig");
 const term = @import("term.zig");
 const Disk = @import("disk.zig");
 const Partition = @import("partition.zig");
+const e820 = @import("e820.zig");
+const allocator = @import("alloc.zig");
+const vesa = @import("vesa.zig");
 const RawPartition = Partition.Raw;
 
 export fn _extended_entry(drive: u8, raw_partition: *RawPartition, idx: u8) linksection(".entry") callconv(.C) noreturn {
+    term.print("[+] entered extended bootloader\r\n", .{});
+
     main(drive, raw_partition, idx) catch |err| @panic(@errorName(err));
 
     @panic("failed to load next stages");
@@ -15,6 +20,44 @@ export fn _extended_entry(drive: u8, raw_partition: *RawPartition, idx: u8) link
 fn main(drive: u8, raw_partition: *RawPartition, idx: u8) !void {
     enable_a20();
     enable_unreal_mode();
+
+    allocator.init();
+
+    var regions = allocator.alloc(e820.Region, 0);
+    var query: e820.Query = .{ .bx = 0 };
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        regions = allocator.extend(regions, 1);
+
+        query = e820.query(&regions[i], query.bx);
+
+        if (query.bx == 0 or query.carry) break;
+    }
+
+    var vesa_info: vesa.Info = undefined;
+    if (0x4f != vesa.Info.query(&vesa_info)) {
+        @panic("failed to query vesa vbe info");
+    }
+
+    var modes: [*]u16 = @ptrFromInt(vesa_info.modes.addr());
+    var vesa_mode: vesa.Mode = undefined;
+    while (modes[0] != 0xffff) : (modes += 1) {
+        const mode = modes[0];
+
+        if (0x4f != vesa.Mode.query(&vesa_mode, mode)) {
+            @panic("failed to query vesa mode info");
+        }
+
+        if (vesa_mode.raw.width == 640 and vesa_mode.raw.height == 480) {
+            term.print("setting {d}x{d} mode\r\n", .{ vesa_mode.raw.width, vesa_mode.raw.height });
+            if (0x4f != vesa_mode.set()) {
+                @panic("failed to set vesa mode info");
+            }
+            break;
+        }
+    }
+
+    if (modes[0] == 0xffff) @panic("failed to find suitable vesa mode");
 
     term.print("[+] enter extended bootloader\r\n", .{});
 
@@ -25,13 +68,14 @@ fn main(drive: u8, raw_partition: *RawPartition, idx: u8) !void {
     var fs = Fs.from(&partition, 0x7C00);
 
     var boot = try fs.root().open("NEXT.BIN");
-    try boot.read(@as([*]u8, @ptrFromInt(0x100000))[0..mem.alignForward(usize, boot.raw.size, 512)]);
+    const kernel = @as([*]u8, @ptrFromInt(0x100000))[0..mem.alignForward(usize, boot.raw.size, 0x1000)];
+    _ = try boot.reader().read(kernel);
 
     term.print("[+] switching to bootstrap\r\n", .{});
 
-    asm volatile ("jmp _code_16");
+    // asm volatile ("jmp _code_16");
 
-    @panic("failed extended bootloader\r\n");
+    @panic("extended bootloader should not reach here\r\n");
 }
 
 pub fn panic(static: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
